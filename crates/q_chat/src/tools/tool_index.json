@@ -176,5 +176,44 @@
       },
       "required": ["title"]
     }
+  },
+  "memory": {
+    "name": "memory",
+    "description": "Store and retrieve information in memory across chat sessions",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "enum": ["Add", "Remove", "Clear", "Search", "Show"],
+          "description": "The memory operation to perform"
+        },
+        "name": {
+          "type": "string",
+          "description": "A descriptive name for the memory context (for add and remove operations)"
+        },
+        "value": {
+          "type": "string",
+          "description": "The value to store in memory (for add operation) - can be text or a file/directory path"
+        },
+        "context_id": {
+          "type": "string",
+          "description": "The context identifier of the memory bank for a targetted change. Obtained from Show command."
+        },
+        "path": {
+          "type": "string",
+          "description": "The absolute path of an entry to be removed. Used in remove operations."
+        },
+        "query": {
+          "type": "string",
+          "description": "The search query to find entries in memory (for search operation)"
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Confirmation flag for destructive operations like clear"
+        }
+      },
+      "required": ["command"]
+    }
   }
 }
