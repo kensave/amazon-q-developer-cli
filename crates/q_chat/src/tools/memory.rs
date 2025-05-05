@@ -217,7 +217,7 @@ impl Memory {
                 format!("Added '{}' to memory", add.name)
             },
             Memory::Remove(remove) => {
-                let result = if !remove.context_id.is_empty() {
+                if !remove.context_id.is_empty() {
                     // Remove by ID
                     if store.remove_by_id(&remove.context_id) {
                         format!("Removed context with ID '{}' from memory", remove.context_id)
@@ -240,8 +240,7 @@ impl Memory {
                     }
                 } else {
                     "Error: No identifier provided for removal. Please specify name, context_id, or path.".to_string()
-                };
-                result
+                }
             },
             Memory::Clear(_) => {
                 let count = store.clear();
@@ -397,24 +396,15 @@ impl MemoryStore {
     }
 
     pub fn remove_by_id(&mut self, id: &str) -> bool {
-        match self.memory_bank_client.remove_context_by_id(id, true) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.memory_bank_client.remove_context_by_id(id, true).is_ok()
     }
 
     pub fn remove_by_name(&mut self, name: &str) -> bool {
-        match self.memory_bank_client.remove_context_by_name(name, true) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.memory_bank_client.remove_context_by_name(name, true).is_ok()
     }
 
     pub fn remove_by_path(&mut self, path: &str) -> bool {
-        match self.memory_bank_client.remove_context_by_path(path, true) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        self.memory_bank_client.remove_context_by_path(path, true).is_ok()
     }
 
     pub fn clear(&mut self) -> usize {
