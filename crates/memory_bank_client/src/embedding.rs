@@ -38,7 +38,7 @@ impl TextEmbedder {
     pub fn with_model(model: FastEmbeddingModel) -> Result<Self> {
         info!("Initializing text embedder with model: {:?}", model);
 
-        let model = TextEmbedding::try_new(InitOptions::new(model).with_show_download_progress(true))?;
+        let model = TextEmbedding::try_new(InitOptions::new(model).with_show_download_progress(false))?;
 
         debug!("Text embedder initialized successfully");
         Ok(Self { model })

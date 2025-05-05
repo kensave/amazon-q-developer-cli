@@ -214,6 +214,7 @@
         }
       },
       "required": ["command"]
+    }
   },
   "q_think_tool":{
     "name": "q_think_tool",
@@ -228,4 +229,5 @@
       },
       "required": ["thought"]
     }
+  }
 }
