@@ -784,7 +784,7 @@ async fn test_memory_remove_by_name() {
     let mut updates = Vec::new();
 
     // Use a unique name for this test
-    let test_name = format!("test_name_{}", Uuid::new_v4());
+    let test_name = format!("test_name_{}", uuid::Uuid::new_v4());
 
     // Add an entry first using the same memory store instance that will be used by invoke
     let memory_add = Memory::Add(MemoryAdd {
