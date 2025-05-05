@@ -4,8 +4,8 @@ pub mod fs_read;
 pub mod fs_write;
 pub mod gh_issue;
 pub mod memory;
+pub mod think;
 pub mod use_aws;
-
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{
@@ -29,6 +29,7 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use think::Think;
 use use_aws::UseAws;
 
 use super::consts::MAX_TOOL_RESPONSE_SIZE;
@@ -43,6 +44,7 @@ pub enum Tool {
     Custom(CustomTool),
     GhIssue(GhIssue),
     Memory(memory::Memory),
+    Think(Think),
 }
 
 impl Tool {
@@ -56,6 +58,7 @@ impl Tool {
             Tool::Custom(custom_tool) => &custom_tool.name,
             Tool::GhIssue(_) => "gh_issue",
             Tool::Memory(_) => "memory",
+            Tool::Think(_) => "q_think_tool (beta)",
         }
         .to_owned()
     }
@@ -70,6 +73,7 @@ impl Tool {
             Tool::Custom(_) => true,
             Tool::GhIssue(_) => false,
             Tool::Memory(_) => false,
+            Tool::Think(_) => true,
         }
     }
 
@@ -83,6 +87,7 @@ impl Tool {
             Tool::Custom(custom_tool) => custom_tool.invoke(context, updates).await,
             Tool::GhIssue(gh_issue) => gh_issue.invoke(updates).await,
             Tool::Memory(memory) => memory.invoke(context, updates).await,
+            Tool::Think(think) => think.invoke(updates).await,
         }
     }
 
@@ -96,6 +101,7 @@ impl Tool {
             Tool::Custom(custom_tool) => custom_tool.queue_description(updates),
             Tool::GhIssue(gh_issue) => gh_issue.queue_description(updates),
             Tool::Memory(memory) => memory.queue_description(updates).await,
+            Tool::Think(think) => Think::queue_description(think, updates),
         }
     }
 
@@ -109,6 +115,7 @@ impl Tool {
             Tool::Custom(custom_tool) => custom_tool.validate(ctx).await,
             Tool::GhIssue(gh_issue) => gh_issue.validate(ctx).await,
             Tool::Memory(memory) => memory.validate(ctx).await,
+            Tool::Think(think) => think.validate(ctx).await,
         }
     }
 }
@@ -183,6 +190,7 @@ impl ToolPermissions {
             "use_aws" => "trust read-only commands".dark_grey(),
             "report_issue" => "trusted".dark_green().bold(),
             "memory" => "trusted".dark_green().bold(),
+            "q_think_tool" => "trusted (beta)".dark_green().bold(),
             _ => "not trusted".dark_grey(),
         };
 

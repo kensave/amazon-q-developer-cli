@@ -3898,7 +3898,6 @@ mod tests {
                 "Done",
             ],
         ]));
-
         let tool_manager = ToolManager::default();
         let tool_config = serde_json::from_str::<HashMap<String, ToolSpec>>(include_str!("tools/tool_index.json"))
             .expect("Tools failed to load");
