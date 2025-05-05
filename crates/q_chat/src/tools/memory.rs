@@ -185,17 +185,11 @@ impl Memory {
                         style::ResetColor,
                     )?;
                 } else {
-                    queue!(
-                        updates,
-                        style::Print(" across all contexts"),
-                    )?;
+                    queue!(updates, style::Print(" across all contexts"),)?;
                 }
             },
             Memory::Show => {
-                queue!(
-                    updates,
-                    style::Print("Showing all memory entries"),
-                )?;
+                queue!(updates, style::Print("Showing all memory entries"),)?;
             },
         };
         Ok(())
@@ -357,43 +351,41 @@ impl MemoryStore {
                 key,
                 path_name,
                 true,
-                Some(move |status| {
-                    match status {
-                        memory_bank_client::types::ProgressStatus::CountingFiles => {
-                            pb.set_message("Counting files...");
-                            pb.set_length(100);
-                            pb.set_position(0);
-                        },
-                        memory_bank_client::types::ProgressStatus::StartingIndexing(total) => {
-                            pb.set_message("Indexing files...");
-                            pb.set_length(total as u64);
-                            pb.set_position(0);
-                        },
-                        memory_bank_client::types::ProgressStatus::Indexing(current, total) => {
-                            pb.set_message(format!("Indexing file {} of {}", current, total));
-                            pb.set_position(current as u64);
-                        },
-                        memory_bank_client::types::ProgressStatus::Finalizing => {
-                            pb.set_message("Finalizing index...");
-                            if let Some(len) = pb.length() {
-                                pb.set_position(len - 1);
-                            }
-                        },
-                        memory_bank_client::types::ProgressStatus::Complete => {
-                            pb.finish_with_message("Indexing complete!");
-                            pb.println("✅ Successfully indexed all files and created memory context");
-                        },
-                        memory_bank_client::types::ProgressStatus::CreatingSemanticContext => {
-                            pb.set_message("Creating semantic context...");
-                        },
-                        memory_bank_client::types::ProgressStatus::GeneratingEmbeddings(current, total) => {
-                            pb.set_message(format!("Generating embeddings {} of {}", current, total));
-                            pb.set_position(current as u64);
-                        },
-                        memory_bank_client::types::ProgressStatus::BuildingIndex => {
-                            pb.set_message("Building vector index...");
-                        },
-                    }
+                Some(move |status| match status {
+                    memory_bank_client::types::ProgressStatus::CountingFiles => {
+                        pb.set_message("Counting files...");
+                        pb.set_length(100);
+                        pb.set_position(0);
+                    },
+                    memory_bank_client::types::ProgressStatus::StartingIndexing(total) => {
+                        pb.set_message("Indexing files...");
+                        pb.set_length(total as u64);
+                        pb.set_position(0);
+                    },
+                    memory_bank_client::types::ProgressStatus::Indexing(current, total) => {
+                        pb.set_message(format!("Indexing file {} of {}", current, total));
+                        pb.set_position(current as u64);
+                    },
+                    memory_bank_client::types::ProgressStatus::Finalizing => {
+                        pb.set_message("Finalizing index...");
+                        if let Some(len) = pb.length() {
+                            pb.set_position(len - 1);
+                        }
+                    },
+                    memory_bank_client::types::ProgressStatus::Complete => {
+                        pb.finish_with_message("Indexing complete!");
+                        pb.println("✅ Successfully indexed all files and created memory context");
+                    },
+                    memory_bank_client::types::ProgressStatus::CreatingSemanticContext => {
+                        pb.set_message("Creating semantic context...");
+                    },
+                    memory_bank_client::types::ProgressStatus::GeneratingEmbeddings(current, total) => {
+                        pb.set_message(format!("Generating embeddings {} of {}", current, total));
+                        pb.set_position(current as u64);
+                    },
+                    memory_bank_client::types::ProgressStatus::BuildingIndex => {
+                        pb.set_message("Building vector index...");
+                    },
                 }),
             );
         } else {
@@ -796,28 +788,28 @@ async fn test_memory_search_with_context_id() {
         result_all.as_str().contains("Search results") || result_all.as_str().contains("No matching entries found")
     );
 }
-    #[tokio::test]
-    async fn test_memory_remove_by_name() {
-        let ctx = Context::builder().with_test_home().await.unwrap().build_fake();
-        let mut updates = Vec::new();
+#[tokio::test]
+async fn test_memory_remove_by_name() {
+    let ctx = Context::builder().with_test_home().await.unwrap().build_fake();
+    let mut updates = Vec::new();
 
-        // Use a unique name for this test
-        let test_name = format!("test_name_{}", Uuid::new_v4());
+    // Use a unique name for this test
+    let test_name = format!("test_name_{}", Uuid::new_v4());
 
-        // Add an entry first using the same memory store instance that will be used by invoke
-        let memory_add = Memory::Add(MemoryAdd {
-            name: test_name.clone(),
-            value: "test_value".to_string(),
-        });
-        let _add_result = memory_add.invoke(&ctx, &mut updates).await.unwrap();
+    // Add an entry first using the same memory store instance that will be used by invoke
+    let memory_add = Memory::Add(MemoryAdd {
+        name: test_name.clone(),
+        value: "test_value".to_string(),
+    });
+    let _add_result = memory_add.invoke(&ctx, &mut updates).await.unwrap();
 
-        // Now remove it by name
-        let memory_remove = Memory::Remove(MemoryRemove {
-            name: test_name.clone(),
-            context_id: String::new(),
-            path: String::new(),
-        });
+    // Now remove it by name
+    let memory_remove = Memory::Remove(MemoryRemove {
+        name: test_name.clone(),
+        context_id: String::new(),
+        path: String::new(),
+    });
 
-        let result = memory_remove.invoke(&ctx, &mut updates).await.unwrap();
-        assert!(result.as_str().contains(&test_name));
-    }
+    let result = memory_remove.invoke(&ctx, &mut updates).await.unwrap();
+    assert!(result.as_str().contains(&test_name));
+}

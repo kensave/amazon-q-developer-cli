@@ -2806,14 +2806,14 @@ impl ChatContext {
                         let memory_store = MemoryStore::get_instance();
                         let mut store = memory_store.lock().await;
                         store.add(&path, &path);
-                        
+
                         queue!(
                             self.output,
                             style::SetForegroundColor(Color::Green),
-                            style::Print(format!("\nAdded file to memory: {}\n\n", path)),
+                            style::Print(format!("\nAdded to memory: {}\n\n", path)),
                             style::SetForegroundColor(Color::Reset)
                         )?;
-                        
+
                         ChatState::PromptUser {
                             tool_uses: Some(tool_uses),
                             pending_tool_index,
@@ -2824,7 +2824,7 @@ impl ChatContext {
                         // Implementation for removing memory entries
                         let memory_store = MemoryStore::get_instance();
                         let mut store = memory_store.lock().await;
-                        
+
                         // Try to remove by path first
                         if store.remove_by_path(&path) {
                             queue!(
@@ -2833,7 +2833,7 @@ impl ChatContext {
                                 style::Print(format!("\nRemoved context with path '{}' from memory\n\n", path)),
                                 style::SetForegroundColor(Color::Reset)
                             )?;
-                        } 
+                        }
                         // If path removal fails, try by name
                         else if store.remove_by_name(&path) {
                             queue!(
@@ -2842,8 +2842,7 @@ impl ChatContext {
                                 style::Print(format!("\nRemoved context with name '{}' from memory\n\n", path)),
                                 style::SetForegroundColor(Color::Reset)
                             )?;
-                        } 
-                        else {
+                        } else {
                             queue!(
                                 self.output,
                                 style::SetForegroundColor(Color::Yellow),
@@ -2884,7 +2883,7 @@ impl ChatContext {
                             style::Print(MemorySubcommand::help_text()),
                             style::Print("\n")
                         )?;
-                        
+
                         ChatState::PromptUser {
                             tool_uses: Some(tool_uses),
                             pending_tool_index,

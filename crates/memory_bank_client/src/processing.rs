@@ -9,16 +9,52 @@ use crate::error::{
 };
 use crate::types::FileType;
 
+/// Chunk text into smaller pieces with overlap
+///
+/// # Arguments
+///
+/// * `text` - The text to chunk
+/// * `chunk_size` - The size of each chunk in words
+/// * `overlap` - The number of words to overlap between chunks
+///
+/// # Returns
+///
+/// A vector of string chunks
+pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let words: Vec<&str> = text.split_whitespace().collect();
+
+    if words.is_empty() {
+        return chunks;
+    }
+
+    let mut i = 0;
+    while i < words.len() {
+        let end = (i + chunk_size).min(words.len());
+        let chunk = words[i..end].join(" ");
+        chunks.push(chunk);
+
+        // Move forward by chunk_size - overlap
+        i += chunk_size - overlap;
+        if i >= words.len() || i == 0 {
+            break;
+        }
+    }
+
+    chunks
+}
+
 /// Determine the file type based on extension
 pub fn get_file_type(path: &Path) -> FileType {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("txt") => FileType::Text,
-        Some("md") | Some("markdown") => FileType::Markdown,
+        Some("md" | "markdown") => FileType::Markdown,
         Some("json") => FileType::Json,
         // Code file extensions
-        Some("rs") | Some("py") | Some("js") | Some("ts") | Some("java") | Some("c") | Some("cpp") | Some("h")
-        | Some("hpp") | Some("go") | Some("rb") | Some("php") | Some("cs") | Some("swift") | Some("kt")
-        | Some("scala") | Some("sh") | Some("bash") | Some("html") | Some("css") | Some("sql") => FileType::Code,
+        Some(
+            "rs" | "py" | "js" | "ts" | "java" | "c" | "cpp" | "h" | "hpp" | "go" | "rb" | "php" | "cs" | "swift"
+            | "kt" | "scala" | "sh" | "bash" | "html" | "css" | "sql",
+        ) => FileType::Code,
         _ => FileType::Unknown,
     }
 }
@@ -50,30 +86,56 @@ pub fn process_file(path: &Path) -> Result<Vec<Value>> {
 
     match file_type {
         FileType::Text | FileType::Markdown | FileType::Code => {
-            // For text-based files, create a single data point
-            let mut metadata = serde_json::Map::new();
-            metadata.insert("text".to_string(), Value::String(content.clone()));
-            metadata.insert("path".to_string(), Value::String(path.to_string_lossy().to_string()));
-            metadata.insert("file_type".to_string(), Value::String(format!("{:?}", file_type)));
+            // For text-based files, chunk the content and create multiple data points
+            // IMPORTANT: This is the balance between context or tokens utilization,
+            // this needs to be tuned.
+            let chunks = chunk_text(&content, 500, 128);
+            let path_str = path.to_string_lossy().to_string();
+            let file_type_str = format!("{:?}", file_type);
 
-            // For code files, add additional metadata
-            if file_type == FileType::Code {
-                metadata.insert(
-                    "language".to_string(),
-                    Value::String(
-                        path.extension()
-                            .and_then(|ext| ext.to_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                    ),
-                );
+            let mut results = Vec::new();
+
+            for (i, chunk) in chunks.iter().enumerate() {
+                let mut metadata = serde_json::Map::new();
+                metadata.insert("text".to_string(), Value::String(chunk.clone()));
+                metadata.insert("path".to_string(), Value::String(path_str.clone()));
+                metadata.insert("file_type".to_string(), Value::String(file_type_str.clone()));
+                metadata.insert("chunk_index".to_string(), Value::Number((i as u64).into()));
+                metadata.insert("total_chunks".to_string(), Value::Number((chunks.len() as u64).into()));
+
+                // For code files, add additional metadata
+                if file_type == FileType::Code {
+                    metadata.insert(
+                        "language".to_string(),
+                        Value::String(
+                            path.extension()
+                                .and_then(|ext| ext.to_str())
+                                .unwrap_or("unknown")
+                                .to_string(),
+                        ),
+                    );
+                }
+
+                results.push(Value::Object(metadata));
             }
 
-            Ok(vec![Value::Object(metadata)])
+            // If no chunks were created (empty file), create at least one entry
+            if results.is_empty() {
+                let mut metadata = serde_json::Map::new();
+                metadata.insert("text".to_string(), Value::String(String::new()));
+                metadata.insert("path".to_string(), Value::String(path_str));
+                metadata.insert("file_type".to_string(), Value::String(file_type_str));
+                metadata.insert("chunk_index".to_string(), Value::Number(0.into()));
+                metadata.insert("total_chunks".to_string(), Value::Number(1.into()));
+
+                results.push(Value::Object(metadata));
+            }
+
+            Ok(results)
         },
         FileType::Json => {
             // For JSON files, parse the content
-            let json: Value = serde_json::from_str(&content).map_err(|e| MemoryBankError::SerializationError(e))?;
+            let json: Value = serde_json::from_str(&content).map_err(MemoryBankError::SerializationError)?;
 
             match json {
                 Value::Array(items) => {
@@ -121,8 +183,7 @@ pub fn process_directory(dir_path: &Path) -> Result<Vec<Value>> {
         if path
             .file_name()
             .and_then(|n| n.to_str())
-            .map(|s| s.starts_with('.'))
-            .unwrap_or(false)
+            .is_some_and(|s| s.starts_with('.'))
         {
             continue;
         }

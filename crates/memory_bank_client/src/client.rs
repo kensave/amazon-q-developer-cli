@@ -258,7 +258,7 @@ impl MemoryBankClient {
         F: Fn(ProgressStatus) + Send + 'static,
     {
         let path = path.as_ref();
-        
+
         if path.is_dir() {
             // Handle directory
             self.add_context_from_directory(path, name, description, persistent, progress_callback)
@@ -298,15 +298,15 @@ impl MemoryBankClient {
         F: Fn(ProgressStatus) + Send + 'static,
     {
         let file_path = file_path.as_ref();
-        
+
         // Notify progress: Starting
         if let Some(ref callback) = progress_callback {
             callback(ProgressStatus::CountingFiles);
         }
-        
+
         // Generate a unique ID for this context
         let id = Uuid::new_v4().to_string();
-        
+
         // Create the context directory
         let context_dir = if persistent {
             let context_dir = self.base_dir.join(&id);
@@ -318,50 +318,47 @@ impl MemoryBankClient {
             fs::create_dir_all(&temp_dir)?;
             temp_dir
         };
-        
+
         // Notify progress: Starting indexing
         if let Some(ref callback) = progress_callback {
             callback(ProgressStatus::StartingIndexing(1));
         }
-        
+
         // Process the file
-        let items = match process_file(file_path) {
-            Ok(items) => items,
-            Err(e) => return Err(e),
-        };
-        
+        let items = process_file(file_path)?;
+
         // Notify progress: Indexing
         if let Some(ref callback) = progress_callback {
             callback(ProgressStatus::Indexing(1, 1));
         }
-        
+
         // Notify progress: Creating semantic context
         if let Some(ref callback) = progress_callback {
             callback(ProgressStatus::CreatingSemanticContext);
         }
-        
+
         // Create a new semantic context
         let mut semantic_context = SemanticContext::new(context_dir.join("data.json"))?;
-        
+
         // Add the items to the context
         let mut data_points = Vec::new();
         let total_items = items.len();
-        
+
         // Process items with progress updates for embedding generation
         for (i, item) in items.iter().enumerate() {
             // Extract the text from the item
             let text = item.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            
+
             // Update progress for embedding generation
             if let Some(ref callback) = progress_callback {
                 if i % 10 == 0 {
                     callback(ProgressStatus::GeneratingEmbeddings(i, total_items));
                 }
             }
-            
+
             // Generate an embedding for the text
             let vector = self.embedder.embed(text)?;
-            
+
             // Convert Value to HashMap
             let payload: HashMap<String, Value> = if let Value::Object(map) = item {
                 map.clone().into_iter().collect()
@@ -370,29 +367,29 @@ impl MemoryBankClient {
                 map.insert("text".to_string(), item.clone());
                 map
             };
-            
+
             // Create a data point
             data_points.push(DataPoint { id: i, payload, vector });
         }
-        
+
         // Notify progress: Building index
         if let Some(ref callback) = progress_callback {
             callback(ProgressStatus::BuildingIndex);
         }
-        
+
         // Add the data points to the context
         let item_count = semantic_context.add_data_points(data_points)?;
-        
+
         // Notify progress: Finalizing
         if let Some(ref callback) = progress_callback {
             callback(ProgressStatus::Finalizing);
         }
-        
+
         // Save to disk if persistent
         if persistent {
             semantic_context.save()?;
         }
-        
+
         // Create the context metadata
         let context = MemoryContext::new(
             id.clone(),
@@ -402,22 +399,22 @@ impl MemoryBankClient {
             Some(file_path.to_string_lossy().to_string()),
             item_count,
         );
-        
+
         // Store the context
         if persistent {
             self.persistent_contexts.insert(id.clone(), context);
             self.save_contexts_metadata()?;
         }
-        
+
         // Store the semantic context
         self.volatile_contexts
             .insert(id.clone(), Arc::new(Mutex::new(semantic_context)));
-        
+
         // Notify progress: Complete
         if let Some(ref callback) = progress_callback {
             callback(ProgressStatus::Complete);
         }
-        
+
         Ok(id)
     }
 
@@ -481,8 +478,7 @@ impl MemoryBankClient {
             if path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| s.starts_with('.'))
-                .unwrap_or(false)
+                .is_some_and(|s| s.starts_with('.'))
             {
                 continue;
             }
@@ -511,8 +507,7 @@ impl MemoryBankClient {
             if path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| s.starts_with('.'))
-                .unwrap_or(false)
+                .is_some_and(|s| s.starts_with('.'))
             {
                 continue;
             }
@@ -542,7 +537,7 @@ impl MemoryBankClient {
         // Add the items to the context
         let mut data_points = Vec::new();
         let total_items = items.len();
-        
+
         // Process items with progress updates for embedding generation
         for (i, item) in items.iter().enumerate() {
             // Extract the text from the item
@@ -697,12 +692,12 @@ impl MemoryBankClient {
         let mut contexts = Vec::new();
 
         // Add persistent contexts
-        for (_, context) in &self.persistent_contexts {
+        for context in self.persistent_contexts.values() {
             contexts.push(context.clone());
         }
 
         // Add volatile contexts that aren't already in persistent contexts
-        for (id, _) in &self.volatile_contexts {
+        for id in self.volatile_contexts.keys() {
             if !self.persistent_contexts.contains_key(id) {
                 // Create a temporary context object for volatile contexts
                 let context = MemoryContext::new(
@@ -740,7 +735,7 @@ impl MemoryBankClient {
         for (id, context) in &self.volatile_contexts {
             let context_guard = context
                 .lock()
-                .map_err(|_| MemoryBankError::OperationFailed("Failed to acquire lock on context".to_string()))?;
+                .map_err(|e| MemoryBankError::OperationFailed(format!("Failed to acquire lock on context: {}", e)))?;
 
             match context_guard.search(&query_vector, limit) {
                 Ok(results) => {
@@ -790,7 +785,7 @@ impl MemoryBankClient {
 
         let context_guard = context
             .lock()
-            .map_err(|_| MemoryBankError::OperationFailed("Failed to acquire lock on context".to_string()))?;
+            .map_err(|e| MemoryBankError::OperationFailed(format!("Failed to acquire lock on context: {}", e)))?;
 
         context_guard.search(&query_vector, limit)
     }
@@ -829,7 +824,7 @@ impl MemoryBankClient {
         // Get the context data
         let context_guard = context
             .lock()
-            .map_err(|_| MemoryBankError::OperationFailed("Failed to acquire lock on context".to_string()))?;
+            .map_err(|e| MemoryBankError::OperationFailed(format!("Failed to acquire lock on context: {}", e)))?;
 
         // Save the data to the persistent directory
         let data_path = persistent_dir.join("data.json");
@@ -889,7 +884,8 @@ impl MemoryBankClient {
     /// Result indicating success or failure
     pub fn remove_context_by_name(&mut self, name: &str, delete_persistent: bool) -> Result<()> {
         // Find the context ID by name
-        let context_id = self.persistent_contexts
+        let context_id = self
+            .persistent_contexts
             .iter()
             .find(|(_, ctx)| ctx.name == name)
             .map(|(id, _)| id.clone());
@@ -897,7 +893,10 @@ impl MemoryBankClient {
         if let Some(id) = context_id {
             self.remove_context_by_id(&id, delete_persistent)
         } else {
-            Err(MemoryBankError::ContextNotFound(format!("No context found with name: {}", name)))
+            Err(MemoryBankError::ContextNotFound(format!(
+                "No context found with name: {}",
+                name
+            )))
         }
     }
 
@@ -913,15 +912,19 @@ impl MemoryBankClient {
     /// Result indicating success or failure
     pub fn remove_context_by_path(&mut self, path: &str, delete_persistent: bool) -> Result<()> {
         // Find the context ID by path
-        let context_id = self.persistent_contexts
+        let context_id = self
+            .persistent_contexts
             .iter()
-            .find(|(_, ctx)| ctx.source_path.as_ref().map_or(false, |p| p == path))
+            .find(|(_, ctx)| ctx.source_path.as_ref().is_some_and(|p| p == path))
             .map(|(id, _)| id.clone());
 
         if let Some(id) = context_id {
             self.remove_context_by_id(&id, delete_persistent)
         } else {
-            Err(MemoryBankError::ContextNotFound(format!("No context found with path: {}", path)))
+            Err(MemoryBankError::ContextNotFound(format!(
+                "No context found with path: {}",
+                path
+            )))
         }
     }
 
@@ -937,10 +940,12 @@ impl MemoryBankClient {
     /// Result indicating success or failure
     pub fn remove_context(&mut self, context_id_or_name: &str, delete_persistent: bool) -> Result<()> {
         // Try to remove by ID first
-        if self.persistent_contexts.contains_key(context_id_or_name) || self.volatile_contexts.contains_key(context_id_or_name) {
+        if self.persistent_contexts.contains_key(context_id_or_name)
+            || self.volatile_contexts.contains_key(context_id_or_name)
+        {
             return self.remove_context_by_id(context_id_or_name, delete_persistent);
         }
-        
+
         // If not found by ID, try by name
         self.remove_context_by_name(context_id_or_name, delete_persistent)
     }
