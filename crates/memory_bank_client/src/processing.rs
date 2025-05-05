@@ -51,10 +51,8 @@ pub fn get_file_type(path: &Path) -> FileType {
         Some("md" | "markdown") => FileType::Markdown,
         Some("json") => FileType::Json,
         // Code file extensions
-        Some(
-            "rs" | "py" | "js" | "ts" | "java" | "c" | "cpp" | "h" | "hpp" | "go" | "rb" | "php" | "cs" | "swift"
-            | "kt" | "scala" | "sh" | "bash" | "html" | "css" | "sql",
-        ) => FileType::Code,
+        Some("rs" | "py" | "js" | "ts" | "java" | "c" | "cpp" | "h" | "hpp" | "go" | "rb" | "php" | "cs" | 
+             "swift" | "kt" | "scala" | "sh" | "bash" | "html" | "css" | "sql") => FileType::Code,
         _ => FileType::Unknown,
     }
 }
