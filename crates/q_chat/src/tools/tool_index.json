@@ -198,7 +198,7 @@
         },
         "context_id": {
           "type": "string",
-          "description": "The context identifier of the memory bank for a targetted change. Obtained from Show command."
+          "description": "The context identifier of the memory bank for a targeted change. Obtained from Show command."
         },
         "path": {
           "type": "string",
