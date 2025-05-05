@@ -13,12 +13,11 @@ use crate::types::FileType;
 pub fn get_file_type(path: &Path) -> FileType {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("txt") => FileType::Text,
-        Some("md") | Some("markdown") => FileType::Markdown,
+        Some("md" | "markdown") => FileType::Markdown,
         Some("json") => FileType::Json,
         // Code file extensions
-        Some("rs") | Some("py") | Some("js") | Some("ts") | Some("java") | Some("c") | Some("cpp") | Some("h")
-        | Some("hpp") | Some("go") | Some("rb") | Some("php") | Some("cs") | Some("swift") | Some("kt")
-        | Some("scala") | Some("sh") | Some("bash") | Some("html") | Some("css") | Some("sql") => FileType::Code,
+        Some("rs" | "py" | "js" | "ts" | "java" | "c" | "cpp" | "h" | "hpp" | "go" | "rb" | "php" | "cs" | 
+             "swift" | "kt" | "scala" | "sh" | "bash" | "html" | "css" | "sql") => FileType::Code,
         _ => FileType::Unknown,
     }
 }
@@ -73,7 +72,7 @@ pub fn process_file(path: &Path) -> Result<Vec<Value>> {
         },
         FileType::Json => {
             // For JSON files, parse the content
-            let json: Value = serde_json::from_str(&content).map_err(|e| MemoryBankError::SerializationError(e))?;
+            let json: Value = serde_json::from_str(&content).map_err(MemoryBankError::SerializationError)?;
 
             match json {
                 Value::Array(items) => {
@@ -121,8 +120,7 @@ pub fn process_directory(dir_path: &Path) -> Result<Vec<Value>> {
         if path
             .file_name()
             .and_then(|n| n.to_str())
-            .map(|s| s.starts_with('.'))
-            .unwrap_or(false)
+            .is_some_and(|s| s.starts_with('.'))
         {
             continue;
         }

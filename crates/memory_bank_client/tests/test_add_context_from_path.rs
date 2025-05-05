@@ -1,8 +1,11 @@
+use std::path::Path;
+use std::{
+    env,
+    fs,
+};
+
 use memory_bank_client::MemoryBankClient;
 use memory_bank_client::types::ProgressStatus;
-use std::fs;
-use std::path::Path;
-use std::env;
 
 #[test]
 fn test_add_context_from_path_with_directory() {
@@ -22,13 +25,19 @@ fn test_add_context_from_path_with_directory() {
 
     // Add a context from the directory
     let _context_id = client
-        .add_context_from_path(&test_dir, "Test Context", "Test Description", true, None::<fn(ProgressStatus)>)
+        .add_context_from_path(
+            &test_dir,
+            "Test Context",
+            "Test Description",
+            true,
+            None::<fn(ProgressStatus)>,
+        )
         .unwrap();
 
     // Verify the context was created
     let contexts = client.get_contexts();
     assert!(!contexts.is_empty());
-    
+
     // Clean up
     fs::remove_dir_all(temp_dir).unwrap_or(());
 }
@@ -49,13 +58,19 @@ fn test_add_context_from_path_with_file() {
 
     // Add a context from the file
     let _context_id = client
-        .add_context_from_path(&test_file, "Test Context", "Test Description", true, None::<fn(ProgressStatus)>)
+        .add_context_from_path(
+            &test_file,
+            "Test Context",
+            "Test Description",
+            true,
+            None::<fn(ProgressStatus)>,
+        )
         .unwrap();
 
     // Verify the context was created
     let contexts = client.get_contexts();
     assert!(!contexts.is_empty());
-    
+
     // Clean up
     fs::remove_dir_all(temp_dir).unwrap_or(());
 }
@@ -82,7 +97,7 @@ fn test_add_context_from_path_with_invalid_path() {
 
     // Verify the operation failed
     assert!(result.is_err());
-    
+
     // Clean up
     fs::remove_dir_all(temp_dir).unwrap_or(());
 }
@@ -105,13 +120,19 @@ fn test_backward_compatibility() {
 
     // Add a context using the original method
     let _context_id = client
-        .add_context_from_directory(&test_dir, "Test Context", "Test Description", true, None::<fn(ProgressStatus)>)
+        .add_context_from_directory(
+            &test_dir,
+            "Test Context",
+            "Test Description",
+            true,
+            None::<fn(ProgressStatus)>,
+        )
         .unwrap();
 
     // Verify the context was created
     let contexts = client.get_contexts();
     assert!(!contexts.is_empty());
-    
+
     // Clean up
     fs::remove_dir_all(temp_dir).unwrap_or(());
 }
