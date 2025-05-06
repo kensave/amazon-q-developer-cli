@@ -23,4 +23,4 @@ indicatif = "0.17.0"
 
 # Vector search and embedding libraries
 hnsw_rs = "0.3.1"
-fastembed = "4.8.0"
+fastembed = {  version = "4.8.0" , default-features = false, features = [ "ort-download-binaries", "hf-hub-rustls-tls" ]}
