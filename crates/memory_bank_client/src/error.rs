@@ -32,12 +32,21 @@ pub enum MemoryBankError {
     OperationFailed(String),
 
     /// Error from the fastembed library
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     #[error("Fastembed error: {0}")]
-    FastembedError(#[from] fastembed::Error),
+    FastembedError(String),
 
     /// Other miscellaneous errors
     #[error("Other error: {0}")]
     Other(String),
+}
+
+// Handle fastembed errors by converting them to FastembedError
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl From<fastembed::Error> for MemoryBankError {
+    fn from(err: fastembed::Error) -> Self {
+        MemoryBankError::FastembedError(err.to_string())
+    }
 }
 
 /// Result type for memory bank operations

@@ -19,7 +19,10 @@ use std::sync::{
 use serde_json::Value;
 use uuid::Uuid;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::embedding::TextEmbedder;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+use crate::embedding_candle::CandleTextEmbedder as TextEmbedder;
 use crate::error::{
     MemoryBankError,
     Result,

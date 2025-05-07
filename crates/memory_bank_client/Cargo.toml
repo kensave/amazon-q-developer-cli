@@ -21,6 +21,17 @@ walkdir = "2.3"
 chrono = { version = "0.4", features = ["serde"] }
 indicatif = "0.17.0"
 
-# Vector search and embedding libraries
+# Vector search library
 hnsw_rs = "0.3.1"
-fastembed = {  version = "4.8.0" , default-features = false, features = [ "ort-download-binaries", "hf-hub-rustls-tls" ]}
+
+# Candle dependencies for text embeddings (used on all platforms)
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+tokenizers = "0.15.0"
+hf-hub = "0.3.2"
+anyhow = "1.0"
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+# Fastembed dependencies - only for macOS and Windows
+fastembed = { version = "4.8.0", default-features = false, features = ["ort-download-binaries", "hf-hub-rustls-tls"] }

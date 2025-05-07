@@ -8,8 +8,6 @@
 
 /// Client implementation for memory bank operations
 pub mod client;
-/// Text embedding functionality
-pub mod embedding;
 /// Error types for memory bank operations
 pub mod error;
 /// Vector index implementation
@@ -18,6 +16,14 @@ pub mod index;
 pub mod processing;
 /// Data types for memory operations
 pub mod types;
+
+// Platform-specific embedding modules
+/// Text embedding functionality using fastembed (macOS and Windows only)
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub mod embedding;
+/// Text embedding functionality using candle (used on all platforms, default on Linux)
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub mod embedding_candle;
 
 pub use client::MemoryBankClient;
 pub use error::{

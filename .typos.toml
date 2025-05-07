@@ -1,0 +1,5 @@
+[files]
+extend-exclude = ["**/embedding.rs"]
+
+[default.extend-words]
+mmaped = "mmaped"
