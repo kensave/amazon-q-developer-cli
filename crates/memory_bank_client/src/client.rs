@@ -19,10 +19,9 @@ use std::sync::{
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::embedding_candle::CandleTextEmbedder;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use crate::embedding::TextEmbedder;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-use crate::embedding_candle::CandleTextEmbedder as TextEmbedder;
+use crate::embedding_onnx::TextEmbedder;
 use crate::error::{
     MemoryBankError,
     Result,
@@ -36,16 +35,56 @@ use crate::types::{
     SearchResult,
 };
 
-/// Memory bank client for managing semantic memory
-pub struct MemoryBankClient {
-    /// Base directory for storing persistent contexts
-    base_dir: PathBuf,
-    /// Short-term (volatile) memory contexts
-    volatile_contexts: HashMap<String, Arc<Mutex<SemanticContext>>>,
-    /// Long-term (persistent) memory contexts
-    persistent_contexts: HashMap<String, MemoryContext>,
-    /// Text embedder for generating embeddings
-    embedder: TextEmbedder,
+/// Embedding engine type to use
+#[derive(Debug, Clone, Copy)]
+pub enum EmbeddingType {
+    /// Use Candle embedding engine
+    Candle,
+    /// Use ONNX embedding engine (only available on macOS and Windows)
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    Onnx,
+}
+
+impl Default for EmbeddingType {
+    fn default() -> Self {
+        // Default to Candle on all platforms
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            EmbeddingType::Onnx
+        } else {
+            // This covers all non-macOS, non-Windows platforms
+            EmbeddingType::Candle
+        }
+    }
+}
+
+/// Common trait for text embedders
+pub trait TextEmbedderTrait: Send {
+    /// Generate an embedding for a text
+    fn embed(&self, text: &str) -> Result<Vec<f32>>;
+
+    /// Generate embeddings for multiple texts
+    fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl TextEmbedderTrait for TextEmbedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(text)
+    }
+
+    fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch(texts)
+    }
+}
+
+impl TextEmbedderTrait for CandleTextEmbedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(text)
+    }
+
+    fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch(texts)
+    }
 }
 
 /// A semantic context containing data points and a vector index
@@ -177,6 +216,21 @@ impl SemanticContext {
     }
 }
 
+/// Memory bank client for managing semantic memory
+pub struct MemoryBankClient {
+    /// Base directory for storing persistent contexts
+    base_dir: PathBuf,
+    /// Short-term (volatile) memory contexts
+    volatile_contexts: HashMap<String, Arc<Mutex<SemanticContext>>>,
+    /// Long-term (persistent) memory contexts
+    persistent_contexts: HashMap<String, MemoryContext>,
+    /// Text embedder for generating embeddings
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    embedder: Box<dyn TextEmbedderTrait>,
+    /// Text embedder for generating embeddings (Linux only)
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    embedder: CandleTextEmbedder,
+}
 impl MemoryBankClient {
     /// Create a new memory bank client
     ///
@@ -188,11 +242,32 @@ impl MemoryBankClient {
     ///
     /// A new MemoryBankClient instance
     pub fn new(base_dir: impl AsRef<Path>) -> Result<Self> {
+        Self::with_embedding_type(base_dir, EmbeddingType::default())
+    }
+
+    /// Create a new memory bank client with a specific embedding type
+    ///
+    /// # Arguments
+    ///
+    /// * `base_dir` - Base directory for storing persistent contexts
+    /// * `embedding_type` - Type of embedding engine to use
+    ///
+    /// # Returns
+    ///
+    /// A new MemoryBankClient instance
+    pub fn with_embedding_type(base_dir: impl AsRef<Path>, embedding_type: EmbeddingType) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
         fs::create_dir_all(&base_dir)?;
 
-        // Initialize the embedding model
-        let embedder = TextEmbedder::new()?;
+        // Initialize the embedding model based on the specified type
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let embedder: Box<dyn TextEmbedderTrait> = match embedding_type {
+            EmbeddingType::Candle => Box::new(CandleTextEmbedder::new()?),
+            EmbeddingType::Onnx => Box::new(TextEmbedder::new()?),
+        };
+
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let embedder = CandleTextEmbedder::new()?;
 
         // Load metadata for persistent contexts
         let contexts_file = base_dir.join("contexts.json");
@@ -234,6 +309,23 @@ impl MemoryBankClient {
             .join(".memory_bank");
 
         Self::new(base_dir)
+    }
+
+    /// Create a new memory bank client with the default base directory and specific embedding type
+    ///
+    /// # Arguments
+    ///
+    /// * `embedding_type` - Type of embedding engine to use
+    ///
+    /// # Returns
+    ///
+    /// A new MemoryBankClient instance
+    pub fn new_with_embedding_type(embedding_type: EmbeddingType) -> Result<Self> {
+        let base_dir = dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".memory_bank");
+
+        Self::with_embedding_type(base_dir, embedding_type)
     }
 
     /// Add a context from a path (file or directory)

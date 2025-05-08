@@ -2,6 +2,7 @@ use std::path::{
     Path,
     PathBuf,
 };
+use std::thread::available_parallelism;
 
 use anyhow::Result as AnyhowResult;
 use candle_core::{
@@ -15,6 +16,7 @@ use candle_transformers::models::bert::{
     DTYPE,
     HiddenAct,
 };
+use rayon::prelude::*;
 use tokenizers::Tokenizer;
 use tracing::{
     debug,
@@ -26,6 +28,31 @@ use crate::error::{
     MemoryBankError,
     Result,
 };
+
+/// Get the best available device for inference
+fn get_best_available_device() -> Device {
+    // Try Metal on macOS
+    // Disabled: Layer norm not supported for selected model
+    // only enable Metal if verified it's compatible.
+
+    // Try CUDA on any platform where it's available
+    match Device::new_cuda(0) {
+        Ok(device) => {
+            info!("Using CUDA acceleration for text embedding");
+            return device;
+        },
+        Err(e) => {
+            debug!("CUDA acceleration not available: {}", e);
+        },
+    }
+
+    // Fall back to CPU
+    info!("Using CPU for text embedding (no GPU acceleration available)");
+    Device::Cpu
+}
+
+// Default batch size for processing
+const DEFAULT_BATCH_SIZE: usize = 32;
 
 /// Text embedding generator using Candle for the all-MiniLM-L6-v2 model
 pub struct CandleTextEmbedder {
@@ -84,6 +111,23 @@ impl CandleTextEmbedder {
     pub fn with_model_paths(model_path: &Path, tokenizer_path: &Path) -> Result<Self> {
         info!("Initializing text embedder with model: {:?}", model_path);
 
+        // Automatically detect available parallelism
+        let threads = match available_parallelism() {
+            Ok(n) => n.get(),
+            Err(e) => {
+                error!("Failed to detect available parallelism: {}", e);
+                // Default to 4 threads if detection fails
+                4
+            },
+        };
+        info!("Using {} threads for text embedding", threads);
+
+        // Initialize the global Rayon thread pool once
+        if let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global() {
+            // This is fine - it means the pool is already initialized
+            debug!("Rayon thread pool already initialized or failed: {}", e);
+        }
+
         // Load tokenizer
         let tokenizer = match Tokenizer::from_file(tokenizer_path) {
             Ok(t) => t,
@@ -96,10 +140,11 @@ impl CandleTextEmbedder {
             },
         };
 
-        // Set up device (CPU only for cross-platform compatibility)
-        let device = Device::Cpu;
+        // Get the best available device (Metal, CUDA, or CPU)
+        let device = get_best_available_device();
 
         // Create a config for all-MiniLM-L6-v2
+        // Using optimized configuration for better performance
         let config = Config {
             vocab_size: 30522,
             hidden_size: 384,
@@ -107,7 +152,7 @@ impl CandleTextEmbedder {
             num_attention_heads: 12,
             intermediate_size: 1536,
             hidden_act: HiddenAct::GeluApproximate, // Use approximate GELU for better performance
-            hidden_dropout_prob: 0.1,
+            hidden_dropout_prob: 0.0,               // Disable dropout for inference
             max_position_embeddings: 512,
             type_vocab_size: 2,
             initializer_range: 0.02,
@@ -168,7 +213,7 @@ impl CandleTextEmbedder {
         let repo = api.repo(hf_hub::Repo::with_revision(
             "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             hf_hub::RepoType::Model,
-            "refs/pr/21".to_string(),
+            "main".to_string(),
         ));
 
         // Download model file
@@ -228,143 +273,120 @@ impl CandleTextEmbedder {
             tokenizer.with_padding(Some(pp));
         }
 
-        // Tokenize all texts
-        let tokens = match tokenizer.encode_batch(texts.to_vec(), true) {
-            Ok(t) => t,
-            Err(e) => {
-                error!("Failed to tokenize texts: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to tokenize texts: {}",
-                    e
-                )));
-            },
-        };
+        // Process in batches for better memory efficiency
+        let batch_size = DEFAULT_BATCH_SIZE;
 
-        // Convert tokens to tensors
-        let token_ids = tokens
-            .iter()
-            .map(|tokens| {
-                let tokens = tokens.get_ids().to_vec();
-                match Tensor::new(tokens.as_slice(), &self.device) {
-                    Ok(t) => Ok(t),
+        // Use parallel iterator to process batches in parallel
+        let all_embeddings: Vec<Vec<f32>> = texts
+            .par_chunks(batch_size)
+            .flat_map(|batch| {
+                // Tokenize batch
+                let tokens = match tokenizer.encode_batch(batch.to_vec(), true) {
+                    Ok(t) => t,
                     Err(e) => {
-                        error!("Failed to create token_ids tensor: {}", e);
-                        Err(MemoryBankError::EmbeddingError(format!(
-                            "Failed to create tensor: {}",
-                            e
-                        )))
+                        error!("Failed to tokenize texts: {}", e);
+                        return Vec::new();
                     },
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
+                };
 
-        let attention_mask = tokens
-            .iter()
-            .map(|tokens| {
-                let tokens = tokens.get_attention_mask().to_vec();
-                match Tensor::new(tokens.as_slice(), &self.device) {
-                    Ok(t) => Ok(t),
+                // Pre-allocate vectors with exact capacity
+                let mut token_ids = Vec::with_capacity(batch.len());
+                let mut attention_mask = Vec::with_capacity(batch.len());
+
+                // Convert tokens to tensors
+                for tokens in &tokens {
+                    let ids = tokens.get_ids().to_vec();
+                    let mask = tokens.get_attention_mask().to_vec();
+
+                    let ids_tensor = match Tensor::new(ids.as_slice(), &self.device) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!("Failed to create token_ids tensor: {}", e);
+                            return Vec::new();
+                        },
+                    };
+
+                    let mask_tensor = match Tensor::new(mask.as_slice(), &self.device) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            error!("Failed to create attention_mask tensor: {}", e);
+                            return Vec::new();
+                        },
+                    };
+
+                    token_ids.push(ids_tensor);
+                    attention_mask.push(mask_tensor);
+                }
+
+                // Stack tensors into batches
+                let token_ids = match Tensor::stack(&token_ids, 0) {
+                    Ok(t) => t,
                     Err(e) => {
-                        error!("Failed to create attention_mask tensor: {}", e);
-                        Err(MemoryBankError::EmbeddingError(format!(
-                            "Failed to create tensor: {}",
-                            e
-                        )))
+                        error!("Failed to stack token_ids tensors: {}", e);
+                        return Vec::new();
                     },
-                }
+                };
+
+                let attention_mask = match Tensor::stack(&attention_mask, 0) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("Failed to stack attention_mask tensors: {}", e);
+                        return Vec::new();
+                    },
+                };
+
+                let token_type_ids = match token_ids.zeros_like() {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("Failed to create zeros tensor for token_type_ids: {}", e);
+                        return Vec::new();
+                    },
+                };
+
+                // Run model inference
+                let embeddings = match self.model.forward(&token_ids, &token_type_ids, Some(&attention_mask)) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        error!("Model inference failed: {}", e);
+                        return Vec::new();
+                    },
+                };
+
+                // Apply mean pooling
+                let mean_embeddings = match embeddings.mean(1) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("Failed to compute mean embeddings: {}", e);
+                        return Vec::new();
+                    },
+                };
+
+                // Normalize if configured
+                let final_embeddings = if self.normalize_embeddings {
+                    match Self::normalize_l2(&mean_embeddings) {
+                        Ok(n) => n,
+                        Err(_) => return Vec::new(),
+                    }
+                } else {
+                    mean_embeddings
+                };
+
+                // Convert to Vec<Vec<f32>>
+                final_embeddings.to_vec2::<f32>().unwrap_or_else(|e| {
+                    error!("Failed to convert embeddings to vector: {}", e);
+                    Vec::new()
+                })
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
 
-        // Stack tensors into batches
-        let token_ids = match Tensor::stack(&token_ids, 0) {
-            Ok(t) => t,
-            Err(e) => {
-                error!("Failed to stack token_ids tensors: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to stack tensors: {}",
-                    e
-                )));
-            },
-        };
+        // Check if we have the correct number of embeddings
+        if all_embeddings.len() != texts.len() {
+            return Err(MemoryBankError::EmbeddingError(
+                "Failed to generate embeddings for all texts".to_string(),
+            ));
+        }
 
-        let attention_mask = match Tensor::stack(&attention_mask, 0) {
-            Ok(t) => t,
-            Err(e) => {
-                error!("Failed to stack attention_mask tensors: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to stack tensors: {}",
-                    e
-                )));
-            },
-        };
-
-        let token_type_ids = match token_ids.zeros_like() {
-            Ok(t) => t,
-            Err(e) => {
-                error!("Failed to create zeros tensor for token_type_ids: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to create zeros tensor: {}",
-                    e
-                )));
-            },
-        };
-
-        // Run model inference
-        let embeddings = match self.model.forward(&token_ids, &token_type_ids, Some(&attention_mask)) {
-            Ok(e) => e,
-            Err(e) => {
-                error!("Model inference failed: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Model inference failed: {}",
-                    e
-                )));
-            },
-        };
-
-        // Apply mean pooling
-        let (_n_sentence, _n_tokens, _hidden_size) = match embeddings.dims3() {
-            Ok(dims) => dims,
-            Err(e) => {
-                error!("Failed to get dimensions from embeddings: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to get dimensions: {}",
-                    e
-                )));
-            },
-        };
-
-        // Apply mean pooling directly along dimension 1 (token dimension)
-        let mean_embeddings = match embeddings.mean(1) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to compute mean embeddings: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to compute mean embeddings: {}",
-                    e
-                )));
-            },
-        };
-
-        // Normalize if configured
-        let final_embeddings = if self.normalize_embeddings {
-            Self::normalize_l2(&mean_embeddings)?
-        } else {
-            mean_embeddings
-        };
-
-        // Convert to Vec<Vec<f32>>
-        let embeddings_vec = match final_embeddings.to_vec2::<f32>() {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Failed to convert embeddings to vector: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to convert to vector: {}",
-                    e
-                )));
-            },
-        };
-
-        Ok(embeddings_vec)
+        Ok(all_embeddings)
     }
 
     /// Normalize embedding to unit length (L2 norm)

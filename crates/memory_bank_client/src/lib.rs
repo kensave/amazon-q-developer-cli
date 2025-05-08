@@ -17,13 +17,12 @@ pub mod processing;
 /// Data types for memory operations
 pub mod types;
 
-// Platform-specific embedding modules
+// Embedding modules
+/// Text embedding functionality using candle (available on all platforms)
+pub mod embedding_candle;
 /// Text embedding functionality using fastembed (macOS and Windows only)
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub mod embedding;
-/// Text embedding functionality using candle (used on all platforms, default on Linux)
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub mod embedding_candle;
+pub mod embedding_onnx;
 
 pub use client::MemoryBankClient;
 pub use error::{
