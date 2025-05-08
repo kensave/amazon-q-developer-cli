@@ -20,6 +20,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::client::semantic_context::SemanticContext;
+use crate::config;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::embedding::TextEmbedder;
 use crate::embedding::{
@@ -81,6 +82,12 @@ impl MemoryBankClient {
     pub fn with_embedding_type(base_dir: impl AsRef<Path>, embedding_type: EmbeddingType) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
         fs::create_dir_all(&base_dir)?;
+
+        // Initialize the configuration
+        if let Err(e) = config::init_config(&base_dir) {
+            eprintln!("Failed to initialize memory bank configuration: {}", e);
+            // Continue with default config if initialization fails
+        }
 
         // Initialize the embedding model based on the specified type
         #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -149,6 +156,28 @@ impl MemoryBankClient {
             .join(".memory_bank");
 
         Self::with_embedding_type(base_dir, embedding_type)
+    }
+
+    /// Get the current memory bank configuration
+    ///
+    /// # Returns
+    ///
+    /// A reference to the current configuration
+    pub fn get_config(&self) -> &'static config::MemoryConfig {
+        config::get_config()
+    }
+
+    /// Update the memory bank configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `new_config` - The new configuration to use
+    ///
+    /// # Returns
+    ///
+    /// Result indicating success or failure
+    pub fn update_config(&self, new_config: config::MemoryConfig) -> std::io::Result<()> {
+        config::update_config(&self.base_dir, new_config)
     }
 
     /// Add a context from a path (file or directory)
@@ -638,12 +667,16 @@ impl MemoryBankClient {
     /// # Arguments
     ///
     /// * `query` - Search query
-    /// * `limit` - Maximum number of results to return per context
+    /// * `limit` - Maximum number of results to return per context (if None, uses default_results
+    ///   from config)
     ///
     /// # Returns
     ///
     /// A vector of (context_id, results) pairs
-    pub fn search_all(&self, query: &str, limit: usize) -> Result<Vec<(String, Vec<SearchResult>)>> {
+    pub fn search_all(&self, query: &str, limit: Option<usize>) -> Result<Vec<(String, Vec<SearchResult>)>> {
+        // Use the configured default_results if limit is None
+        let limit = limit.unwrap_or_else(|| config::get_config().default_results);
+
         // Generate an embedding for the query
         let query_vector = self.embedder.embed(query)?;
 
@@ -687,12 +720,15 @@ impl MemoryBankClient {
     ///
     /// * `context_id` - ID of the context to search in
     /// * `query` - Search query
-    /// * `limit` - Maximum number of results to return
+    /// * `limit` - Maximum number of results to return (if None, uses default_results from config)
     ///
     /// # Returns
     ///
     /// A vector of search results
-    pub fn search_context(&self, context_id: &str, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    pub fn search_context(&self, context_id: &str, query: &str, limit: Option<usize>) -> Result<Vec<SearchResult>> {
+        // Use the configured default_results if limit is None
+        let limit = limit.unwrap_or_else(|| config::get_config().default_results);
+
         // Generate an embedding for the query
         let query_vector = self.embedder.embed(query)?;
 

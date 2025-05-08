@@ -8,6 +8,8 @@
 
 /// Client implementation for memory bank operations
 pub mod client;
+/// Configuration management for memory bank
+pub mod config;
 /// Error types for memory bank operations
 pub mod error;
 /// Vector index implementation
@@ -21,6 +23,7 @@ pub mod types;
 pub mod embedding;
 
 pub use client::MemoryBankClient;
+pub use config::MemoryConfig;
 pub use error::{
     MemoryBankError,
     Result,

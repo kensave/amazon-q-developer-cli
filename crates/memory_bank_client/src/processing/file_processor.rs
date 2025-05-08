@@ -17,10 +17,24 @@ pub fn get_file_type(path: &Path) -> FileType {
         Some("md" | "markdown") => FileType::Markdown,
         Some("json") => FileType::Json,
         // Code file extensions
-        Some(
-            "rs" | "py" | "js" | "ts" | "java" | "c" | "cpp" | "h" | "hpp" | "go" | "rb" | "php" | "cs" | "swift"
-            | "kt" | "scala" | "sh" | "bash" | "html" | "css" | "sql",
-        ) => FileType::Code,
+        Some("rs") => FileType::Code,
+        Some("py") => FileType::Code,
+        Some("js" | "jsx" | "ts" | "tsx") => FileType::Code,
+        Some("java") => FileType::Code,
+        Some("c" | "cpp" | "h" | "hpp") => FileType::Code,
+        Some("go") => FileType::Code,
+        Some("rb") => FileType::Code,
+        Some("php") => FileType::Code,
+        Some("swift") => FileType::Code,
+        Some("kt" | "kts") => FileType::Code,
+        Some("cs") => FileType::Code,
+        Some("sh" | "bash" | "zsh") => FileType::Code,
+        Some("html" | "htm" | "xml") => FileType::Code,
+        Some("css" | "scss" | "sass" | "less") => FileType::Code,
+        Some("sql") => FileType::Code,
+        Some("yaml" | "yml") => FileType::Code,
+        Some("toml") => FileType::Code,
+        // Default to unknown
         _ => FileType::Unknown,
     }
 }
@@ -53,9 +67,8 @@ pub fn process_file(path: &Path) -> Result<Vec<Value>> {
     match file_type {
         FileType::Text | FileType::Markdown | FileType::Code => {
             // For text-based files, chunk the content and create multiple data points
-            // IMPORTANT: This is the balance between context or tokens utilization,
-            // this needs to be tuned.
-            let chunks = chunk_text(&content, 500, 128);
+            // Use the configured chunk size and overlap
+            let chunks = chunk_text(&content, None, None);
             let path_str = path.to_string_lossy().to_string();
             let file_type_str = format!("{:?}", file_type);
 

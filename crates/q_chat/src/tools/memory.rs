@@ -422,7 +422,7 @@ impl MemoryStore {
     pub fn search(&self, query: &str, context_id: Option<&str>) -> Vec<(String, String)> {
         match context_id {
             // If context_id is provided, search only in that specific context
-            Some(id) => match self.memory_bank_client.search_context(id, query, 5) {
+            Some(id) => match self.memory_bank_client.search_context(id, query, Some(5)) {
                 Ok(search_results) => search_results
                     .into_iter()
                     .map(|result| {
@@ -433,7 +433,7 @@ impl MemoryStore {
                 Err(_) => Vec::new(),
             },
             // If no context_id is provided, search across all contexts
-            None => match self.memory_bank_client.search_all(query, 5) {
+            None => match self.memory_bank_client.search_all(query, Some(5)) {
                 Ok(results) => results
                     .into_iter()
                     .flat_map(|(context_id, search_results)| {
