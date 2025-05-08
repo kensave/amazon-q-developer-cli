@@ -10,16 +10,19 @@ pub enum EmbeddingType {
     Onnx,
 }
 
+// We can't use #[derive(Default)] here because the default value depends on the target platform
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[allow(clippy::derivable_impls)]
 impl Default for EmbeddingType {
     fn default() -> Self {
-        // Default to Candle on all platforms
-        if cfg!(any(target_os = "macos", target_os = "windows")) {
-            return EmbeddingType::Onnx;
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        {
-            return EmbeddingType::Candle;
-        }
+        EmbeddingType::Onnx
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[allow(clippy::derivable_impls)]
+impl Default for EmbeddingType {
+    fn default() -> Self {
         EmbeddingType::Candle
     }
 }
