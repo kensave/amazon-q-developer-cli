@@ -21,6 +21,7 @@ walkdir = "2.3"
 chrono = { version = "0.4", features = ["serde"] }
 indicatif = "0.17.0"
 rayon = "1.8.0"
+tempfile = "3.8.0"
 
 # Vector search library
 hnsw_rs = "0.3.1"
@@ -29,8 +30,8 @@ hnsw_rs = "0.3.1"
 candle-core = { version = "0.9.1", features = [] }
 candle-nn = "0.9.1"
 candle-transformers = "0.9.1"
-tokenizers = "0.15.0"
-hf-hub = "0.3.2"
+tokenizers = "0.21.1"
+hf-hub = "0.4.2"
 anyhow = "1.0"
 
 # Conditionally enable Metal on macOS
@@ -41,7 +42,7 @@ features = ["metal"]
 # Conditionally enable CUDA on Linux and Windows
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies.candle-core]
 version = "0.9.1"
-features = ["cuda"]
+features = []
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 # Fastembed dependencies - only for macOS and Windows

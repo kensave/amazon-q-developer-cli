@@ -7,42 +7,8 @@ use crate::error::{
     MemoryBankError,
     Result,
 };
+use crate::processing::text_chunker::chunk_text;
 use crate::types::FileType;
-
-/// Chunk text into smaller pieces with overlap
-///
-/// # Arguments
-///
-/// * `text` - The text to chunk
-/// * `chunk_size` - The size of each chunk in words
-/// * `overlap` - The number of words to overlap between chunks
-///
-/// # Returns
-///
-/// A vector of string chunks
-pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let words: Vec<&str> = text.split_whitespace().collect();
-
-    if words.is_empty() {
-        return chunks;
-    }
-
-    let mut i = 0;
-    while i < words.len() {
-        let end = (i + chunk_size).min(words.len());
-        let chunk = words[i..end].join(" ");
-        chunks.push(chunk);
-
-        // Move forward by chunk_size - overlap
-        i += chunk_size - overlap;
-        if i >= words.len() || i == 0 {
-            break;
-        }
-    }
-
-    chunks
-}
 
 /// Determine the file type based on extension
 pub fn get_file_type(path: &Path) -> FileType {
