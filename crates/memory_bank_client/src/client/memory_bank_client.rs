@@ -21,6 +21,8 @@ use uuid::Uuid;
 
 use crate::client::semantic_context::SemanticContext;
 use crate::config;
+#[cfg(test)]
+use crate::embedding::MockTextEmbedder;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::embedding::TextEmbedder;
 use crate::embedding::{
@@ -94,10 +96,16 @@ impl MemoryBankClient {
         let embedder: Box<dyn TextEmbedderTrait> = match embedding_type {
             EmbeddingType::Candle => Box::new(CandleTextEmbedder::new()?),
             EmbeddingType::Onnx => Box::new(TextEmbedder::new()?),
+            #[cfg(test)]
+            EmbeddingType::Mock => Box::new(MockTextEmbedder::new(384)),
         };
 
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        let embedder = CandleTextEmbedder::new()?;
+        let embedder = match embedding_type {
+            EmbeddingType::Candle => CandleTextEmbedder::new()?,
+            #[cfg(test)]
+            EmbeddingType::Mock => MockTextEmbedder::new(384),
+        };
 
         // Load metadata for persistent contexts
         let contexts_file = base_dir.join("contexts.json");

@@ -60,6 +60,21 @@ fn main() -> Result<()> {
 }
 ```
 
+## Testing
+
+The library includes comprehensive tests for all components. By default, tests use a mock embedder to avoid downloading models.
+
+### Running Tests with Mock Embedders (Default)
+
+```bash
+cargo test
+```
+
+### Running Tests with Real Embedders
+
+To run tests with real embedders (which will download models), set the `MEMORY_BANK_USE_REAL_EMBEDDERS` environment variable:
+
+
 ## Core Concepts
 
 ### Memory Contexts

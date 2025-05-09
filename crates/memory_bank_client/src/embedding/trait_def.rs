@@ -8,6 +8,9 @@ pub enum EmbeddingType {
     /// Use ONNX embedding engine (only available on macOS and Windows)
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     Onnx,
+    /// Use Mock embedding engine (only available in tests)
+    #[cfg(test)]
+    Mock,
 }
 
 // We can't use #[derive(Default)] here because the default value depends on the target platform
@@ -48,6 +51,17 @@ impl TextEmbedderTrait for super::TextEmbedder {
 }
 
 impl TextEmbedderTrait for super::CandleTextEmbedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(text)
+    }
+
+    fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_batch(texts)
+    }
+}
+
+#[cfg(test)]
+impl TextEmbedderTrait for super::MockTextEmbedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>> {
         self.embed(text)
     }
