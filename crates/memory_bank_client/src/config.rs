@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 
 use once_cell::sync::OnceCell;
-use serde_derive::{
+use serde::{
     Deserialize,
     Serialize,
 };
