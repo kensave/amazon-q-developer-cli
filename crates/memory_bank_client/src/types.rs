@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+use std::sync::{
+    Arc,
+    Mutex,
+};
 
 use chrono::{
     DateTime,
@@ -8,6 +12,17 @@ use serde::{
     Deserialize,
     Serialize,
 };
+
+use crate::client::SemanticContext;
+
+/// Type alias for context ID
+pub type ContextId = String;
+
+/// Type alias for search results
+pub type SearchResults = Vec<SearchResult>;
+
+/// Type alias for context map
+pub type ContextMap = HashMap<ContextId, Arc<Mutex<SemanticContext>>>;
 
 /// A memory context containing semantic information
 #[derive(Debug, Clone, Serialize, Deserialize)]

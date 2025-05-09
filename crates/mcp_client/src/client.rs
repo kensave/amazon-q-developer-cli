@@ -109,7 +109,7 @@ pub enum ClientError {
     PoisonError(String),
 }
 
-impl From<(tokio::time::error::Elapsed, String)> for ClientError {
+impl From<(Elapsed, String)> for ClientError {
     fn from((error, context): (tokio::time::error::Elapsed, String)) -> Self {
         ClientError::RuntimeError { source: error, context }
     }

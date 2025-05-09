@@ -4,7 +4,10 @@
 //! It supports loading configuration from a JSON file and provides default values.
 
 use std::fs;
-use std::path::Path;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use once_cell::sync::OnceCell;
 use serde::{
@@ -26,6 +29,12 @@ pub struct MemoryConfig {
 
     /// Model name for embeddings
     pub model_name: String,
+
+    /// Timeout in milliseconds for embedding operations
+    pub timeout: u64,
+
+    /// Base directory for storing persistent contexts
+    pub base_dir: PathBuf,
 }
 
 impl Default for MemoryConfig {
@@ -35,6 +44,10 @@ impl Default for MemoryConfig {
             chunk_overlap: 128,
             default_results: 5,
             model_name: "all-MiniLM-L6-v2".to_string(),
+            timeout: 30000, // 30 seconds
+            base_dir: dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".memory_bank"),
         }
     }
 }
@@ -201,6 +214,8 @@ mod tests {
             chunk_overlap: 256,
             default_results: 10,
             model_name: "different-model".to_string(),
+            timeout: 30000,
+            base_dir: temp_dir.path().to_path_buf(),
         };
 
         // Update the config

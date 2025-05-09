@@ -45,7 +45,6 @@ mod tests {
     use std::sync::Once;
 
     use super::*;
-    use crate::config::MemoryConfig;
 
     static INIT: Once = Once::new();
 
@@ -53,11 +52,13 @@ mod tests {
         INIT.call_once(|| {
             // Initialize with test config
             let _ = std::panic::catch_unwind(|| {
-                let _config = MemoryConfig {
+                let _config = config::MemoryConfig {
                     chunk_size: 50,
                     chunk_overlap: 10,
                     default_results: 5,
                     model_name: "test-model".to_string(),
+                    timeout: 30000,
+                    base_dir: std::path::PathBuf::from("."),
                 };
                 // Use a different approach that doesn't access private static
                 let _ = crate::config::init_config(&std::env::temp_dir());

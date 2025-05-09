@@ -114,7 +114,8 @@ pub fn process_file(path: &Path) -> Result<Vec<Value>> {
         },
         FileType::Json => {
             // For JSON files, parse the content
-            let json: Value = serde_json::from_str(&content).map_err(MemoryBankError::SerializationError)?;
+            let json: Value =
+                serde_json::from_str(&content).map_err(|e| MemoryBankError::SerializationError(e.to_string()))?;
 
             match json {
                 Value::Array(items) => {

@@ -1,53 +1,60 @@
-use thiserror::Error;
-
-/// Errors that can occur when using the memory bank client
-#[derive(Error, Debug)]
-pub enum MemoryBankError {
-    /// IO error from the standard library
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-
-    /// JSON serialization or deserialization error
-    #[error("Serialization error: {0}")]
-    SerializationError(#[from] serde_json::Error),
-
-    /// Error generating text embeddings
-    #[error("Embedding error: {0}")]
-    EmbeddingError(String),
-
-    /// Error with the vector index
-    #[error("Index error: {0}")]
-    IndexError(String),
-
-    /// Requested context was not found
-    #[error("Context not found: {0}")]
-    ContextNotFound(String),
-
-    /// Invalid file or directory path
-    #[error("Invalid path: {0}")]
-    InvalidPath(String),
-
-    /// General operation failure
-    #[error("Memory operation failed: {0}")]
-    OperationFailed(String),
-
-    /// Error from the fastembed library
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    #[error("Fastembed error: {0}")]
-    FastembedError(String),
-
-    /// Other miscellaneous errors
-    #[error("Other error: {0}")]
-    Other(String),
-}
-
-// Handle fastembed errors by converting them to FastembedError
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-impl From<fastembed::Error> for MemoryBankError {
-    fn from(err: fastembed::Error) -> Self {
-        MemoryBankError::FastembedError(err.to_string())
-    }
-}
+use std::{
+    fmt,
+    io,
+};
 
 /// Result type for memory bank operations
 pub type Result<T> = std::result::Result<T, MemoryBankError>;
+
+/// Error types for memory bank operations
+#[derive(Debug)]
+pub enum MemoryBankError {
+    /// I/O error
+    IoError(io::Error),
+    /// JSON serialization/deserialization error
+    SerdeError(serde_json::Error),
+    /// JSON serialization/deserialization error (string variant)
+    SerializationError(String),
+    /// Invalid path
+    InvalidPath(String),
+    /// Context not found
+    ContextNotFound(String),
+    /// Operation failed
+    OperationFailed(String),
+    /// Invalid argument
+    InvalidArgument(String),
+    /// Embedding error
+    EmbeddingError(String),
+    /// Fastembed error
+    FastembedError(String),
+}
+
+impl fmt::Display for MemoryBankError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MemoryBankError::IoError(e) => write!(f, "I/O error: {}", e),
+            MemoryBankError::SerdeError(e) => write!(f, "Serialization error: {}", e),
+            MemoryBankError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            MemoryBankError::InvalidPath(path) => write!(f, "Invalid path: {}", path),
+            MemoryBankError::ContextNotFound(id) => write!(f, "Context not found: {}", id),
+            MemoryBankError::OperationFailed(msg) => write!(f, "Operation failed: {}", msg),
+            MemoryBankError::InvalidArgument(msg) => write!(f, "Invalid argument: {}", msg),
+            MemoryBankError::EmbeddingError(msg) => write!(f, "Embedding error: {}", msg),
+            MemoryBankError::FastembedError(msg) => write!(f, "Fastembed error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for MemoryBankError {}
+
+impl From<io::Error> for MemoryBankError {
+    fn from(error: io::Error) -> Self {
+        MemoryBankError::IoError(error)
+    }
+}
+
+impl From<serde_json::Error> for MemoryBankError {
+    fn from(error: serde_json::Error) -> Self {
+        MemoryBankError::SerdeError(error)
+    }
+}
