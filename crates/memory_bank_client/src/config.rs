@@ -2,6 +2,7 @@
 //!
 //! This module provides a centralized configuration system for memory bank settings.
 //! It supports loading configuration from a JSON file and provides default values.
+//! It also manages model paths and directory structure.
 
 use std::fs;
 use std::path::{
@@ -45,15 +46,80 @@ impl Default for MemoryConfig {
             default_results: 5,
             model_name: "all-MiniLM-L6-v2".to_string(),
             timeout: 30000, // 30 seconds
-            base_dir: dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".memory_bank"),
+            base_dir: get_default_base_dir(),
         }
     }
 }
 
 // Global configuration instance using OnceCell for thread-safe initialization
 static CONFIG: OnceCell<MemoryConfig> = OnceCell::new();
+
+/// Get the default base directory for memory bank
+///
+/// # Returns
+///
+/// The default base directory path
+pub fn get_default_base_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".memory_bank")
+}
+
+/// Get the models directory path
+///
+/// # Arguments
+///
+/// * `base_dir` - Base directory for memory bank
+///
+/// # Returns
+///
+/// The models directory path
+pub fn get_models_dir(base_dir: &Path) -> PathBuf {
+    base_dir.join("models")
+}
+
+/// Get the model directory for a specific model
+///
+/// # Arguments
+///
+/// * `base_dir` - Base directory for memory bank
+/// * `model_name` - Name of the model
+///
+/// # Returns
+///
+/// The model directory path
+pub fn get_model_dir(base_dir: &Path, model_name: &str) -> PathBuf {
+    get_models_dir(base_dir).join(model_name)
+}
+
+/// Get the model file path for a specific model
+///
+/// # Arguments
+///
+/// * `base_dir` - Base directory for memory bank
+/// * `model_name` - Name of the model
+/// * `file_name` - Name of the file
+///
+/// # Returns
+///
+/// The model file path
+pub fn get_model_file_path(base_dir: &Path, model_name: &str, file_name: &str) -> PathBuf {
+    get_model_dir(base_dir, model_name).join(file_name)
+}
+
+/// Ensure the models directory exists
+///
+/// # Arguments
+///
+/// * `base_dir` - Base directory for memory bank
+///
+/// # Returns
+///
+/// Result indicating success or failure
+pub fn ensure_models_dir(base_dir: &Path) -> std::io::Result<()> {
+    let models_dir = get_models_dir(base_dir);
+    std::fs::create_dir_all(models_dir)
+}
 
 /// Initializes the global configuration.
 ///
@@ -230,5 +296,37 @@ mod tests {
         assert_eq!(loaded_config.chunk_overlap, 256);
         assert_eq!(loaded_config.default_results, 10);
         assert_eq!(loaded_config.model_name, "different-model");
+    }
+
+    #[test]
+    fn test_directory_structure() {
+        let temp_dir = tempdir().unwrap();
+        let base_dir = temp_dir.path();
+
+        // Test models directory path
+        let models_dir = get_models_dir(base_dir);
+        assert_eq!(models_dir, base_dir.join("models"));
+
+        // Test model directory path
+        let model_dir = get_model_dir(base_dir, "test-model");
+        assert_eq!(model_dir, base_dir.join("models").join("test-model"));
+
+        // Test model file path
+        let model_file = get_model_file_path(base_dir, "test-model", "model.bin");
+        assert_eq!(model_file, base_dir.join("models").join("test-model").join("model.bin"));
+    }
+
+    #[test]
+    fn test_ensure_models_dir() {
+        let temp_dir = tempdir().unwrap();
+        let base_dir = temp_dir.path();
+
+        // Ensure models directory exists
+        ensure_models_dir(base_dir).unwrap();
+
+        // Check that directory was created
+        let models_dir = get_models_dir(base_dir);
+        assert!(models_dir.exists());
+        assert!(models_dir.is_dir());
     }
 }

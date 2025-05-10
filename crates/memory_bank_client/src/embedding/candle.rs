@@ -208,6 +208,14 @@ impl CandleTextEmbedder {
             return Ok(());
         }
 
+        // Create parent directories if they don't exist
+        if let Some(parent) = model_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if let Some(parent) = tokenizer_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         info!("Downloading model files for {}...", config.name);
 
         // Use Hugging Face Hub API to download files
@@ -441,7 +449,7 @@ impl CandleTextEmbedder {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+
     use std::{
         env,
         fs,
@@ -587,7 +595,6 @@ mod tests {
 #[test]
 fn test_model_performance() {
     use std::env;
-    use std::time::Instant;
 
     // Skip this test in CI environments where model files might not be available
     if env::var("CI").is_ok() {
@@ -620,12 +627,12 @@ fn test_model_performance() {
                 let _ = embedder.embed_batch(&texts);
 
                 // Measure single embedding performance
-                let start = Instant::now();
+                let start = std::time::Instant::now();
                 let single_result = embedder.embed(&texts[0]);
                 let single_duration = start.elapsed();
 
                 // Measure batch embedding performance
-                let start = Instant::now();
+                let start = std::time::Instant::now();
                 let batch_result = embedder.embed_batch(&texts);
                 let batch_duration = start.elapsed();
 

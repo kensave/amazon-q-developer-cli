@@ -101,6 +101,9 @@ impl MemoryBankClient {
         let base_dir = base_dir.as_ref().to_path_buf();
         fs::create_dir_all(&base_dir)?;
 
+        // Create models directory
+        crate::config::ensure_models_dir(&base_dir)?;
+
         // Initialize the configuration
         if let Err(e) = config::init_config(&base_dir) {
             tracing::error!("Failed to initialize memory bank configuration: {}", e);
@@ -137,16 +140,35 @@ impl MemoryBankClient {
         Ok(client)
     }
 
+    /// Get the default base directory for memory bank
+    ///
+    /// # Returns
+    ///
+    /// The default base directory path
+    pub fn get_default_base_dir() -> PathBuf {
+        crate::config::get_default_base_dir()
+    }
+
+    /// Get the models directory path
+    ///
+    /// # Arguments
+    ///
+    /// * `base_dir` - Base directory for memory bank
+    ///
+    /// # Returns
+    ///
+    /// The models directory path
+    pub fn get_models_dir(base_dir: &Path) -> PathBuf {
+        crate::config::get_models_dir(base_dir)
+    }
+
     /// Create a new memory bank client with the default base directory
     ///
     /// # Returns
     ///
     /// A new MemoryBankClient instance
     pub fn new_with_default_dir() -> Result<Self> {
-        let base_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".memory_bank");
-
+        let base_dir = Self::get_default_base_dir();
         Self::new(base_dir)
     }
 
@@ -160,10 +182,7 @@ impl MemoryBankClient {
     ///
     /// A new MemoryBankClient instance
     pub fn new_with_embedding_type(embedding_type: EmbeddingType) -> Result<Self> {
-        let base_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".memory_bank");
-
+        let base_dir = Self::get_default_base_dir();
         Self::with_embedding_type(base_dir, embedding_type)
     }
 

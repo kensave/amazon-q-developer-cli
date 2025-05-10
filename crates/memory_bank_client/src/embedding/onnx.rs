@@ -49,9 +49,18 @@ impl TextEmbedder {
     pub fn with_model_type(model_type: OnnxModelType) -> Result<Self> {
         info!("Initializing text embedder with fastembed model: {:?}", model_type);
 
-        // Initialize the embedding model
+        // Get the models directory from the base directory
+        let base_dir = crate::config::get_default_base_dir();
+        let models_dir = crate::config::get_models_dir(&base_dir);
+
+        // Ensure the models directory exists
+        std::fs::create_dir_all(&models_dir)?;
+
+        // Initialize the embedding model with the models directory as cache dir
         let model = match TextEmbedding::try_new(
-            InitOptions::new(model_type.get_fastembed_model()).with_show_download_progress(true),
+            InitOptions::new(model_type.get_fastembed_model())
+                .with_cache_dir(models_dir)
+                .with_show_download_progress(true),
         ) {
             Ok(model) => model,
             Err(e) => {
