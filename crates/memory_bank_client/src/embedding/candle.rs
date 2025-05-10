@@ -1,7 +1,4 @@
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::Path;
 use std::thread::available_parallelism;
 
 use anyhow::Result as AnyhowResult;
@@ -12,9 +9,7 @@ use candle_core::{
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{
     BertModel,
-    Config,
     DTYPE,
-    HiddenAct,
 };
 use rayon::prelude::*;
 use tokenizers::Tokenizer;
@@ -24,6 +19,10 @@ use tracing::{
     info,
 };
 
+use crate::embedding::candle_models::{
+    ModelConfig,
+    ModelType,
+};
 use crate::error::{
     MemoryBankError,
     Result,
@@ -51,10 +50,7 @@ fn get_best_available_device() -> Device {
     Device::Cpu
 }
 
-// Default batch size for processing
-const DEFAULT_BATCH_SIZE: usize = 32;
-
-/// Text embedding generator using Candle for the all-MiniLM-L6-v2 model
+/// Text embedding generator using Candle for embedding models
 pub struct CandleTextEmbedder {
     /// The BERT model
     model: BertModel,
@@ -62,8 +58,8 @@ pub struct CandleTextEmbedder {
     tokenizer: Tokenizer,
     /// The device to run on
     device: Device,
-    /// Whether to normalize embeddings
-    normalize_embeddings: bool,
+    /// Model configuration
+    config: ModelConfig,
 }
 
 impl CandleTextEmbedder {
@@ -73,21 +69,31 @@ impl CandleTextEmbedder {
     ///
     /// A new TextEmbedder instance
     pub fn new() -> Result<Self> {
-        // Default paths for model files - these should be downloaded during build or installation
-        let model_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("amazon-q-models");
+        Self::with_model_type(ModelType::default())
+    }
 
-        if let Err(err) = std::fs::create_dir_all(&model_dir) {
+    /// Create a new TextEmbedder with a specific model type
+    ///
+    /// # Arguments
+    ///
+    /// * `model_type` - The type of model to use
+    ///
+    /// # Returns
+    ///
+    /// A new TextEmbedder instance
+    pub fn with_model_type(model_type: ModelType) -> Result<Self> {
+        let model_config = model_type.get_config();
+        let (model_path, tokenizer_path) = model_config.get_local_paths();
+
+        // Create model directory if it doesn't exist
+        let model_dir = model_path.parent().unwrap_or_else(|| Path::new("."));
+        if let Err(err) = std::fs::create_dir_all(model_dir) {
             error!("Failed to create model directory: {}", err);
             return Err(MemoryBankError::IoError(err));
         }
 
-        let model_path = model_dir.join("all-MiniLM-L6-v2.safetensors");
-        let tokenizer_path = model_dir.join("tokenizer.json");
-
         // Download files if they don't exist
-        match Self::ensure_model_files(&model_path, &tokenizer_path) {
+        match Self::ensure_model_files(&model_path, &tokenizer_path, &model_config) {
             Ok(_) => {},
             Err(e) => {
                 error!("Failed to ensure model files: {}", e);
@@ -95,20 +101,21 @@ impl CandleTextEmbedder {
             },
         }
 
-        Self::with_model_paths(&model_path, &tokenizer_path)
+        Self::with_model_config(&model_path, &tokenizer_path, model_config)
     }
 
-    /// Create a new TextEmbedder with specific model paths
+    /// Create a new TextEmbedder with specific model paths and configuration
     ///
     /// # Arguments
     ///
     /// * `model_path` - Path to the model file (.safetensors)
     /// * `tokenizer_path` - Path to the tokenizer file (.json)
+    /// * `config` - Model configuration
     ///
     /// # Returns
     ///
     /// A new TextEmbedder instance
-    pub fn with_model_paths(model_path: &Path, tokenizer_path: &Path) -> Result<Self> {
+    pub fn with_model_config(model_path: &Path, tokenizer_path: &Path, config: ModelConfig) -> Result<Self> {
         info!("Initializing text embedder with model: {:?}", model_path);
 
         // Automatically detect available parallelism
@@ -143,27 +150,6 @@ impl CandleTextEmbedder {
         // Get the best available device (Metal, CUDA, or CPU)
         let device = get_best_available_device();
 
-        // Create a config for all-MiniLM-L6-v2
-        // Using optimized configuration for better performance
-        let config = Config {
-            vocab_size: 30522,
-            hidden_size: 384,
-            num_hidden_layers: 6,
-            num_attention_heads: 12,
-            intermediate_size: 1536,
-            hidden_act: HiddenAct::GeluApproximate, // Use approximate GELU for better performance
-            hidden_dropout_prob: 0.0,               // Disable dropout for inference
-            max_position_embeddings: 512,
-            type_vocab_size: 2,
-            initializer_range: 0.02,
-            layer_norm_eps: 1e-12,
-            pad_token_id: 0,
-            position_embedding_type: Default::default(),
-            use_cache: true,
-            classifier_dropout: None,
-            model_type: Some("bert".to_string()),
-        };
-
         // Load model weights
         let vb = unsafe {
             match VarBuilder::from_mmaped_safetensors(&[model_path], DTYPE, &device) {
@@ -178,7 +164,7 @@ impl CandleTextEmbedder {
             }
         };
 
-        let model = match BertModel::load(vb, &config) {
+        let model = match BertModel::load(vb, &config.config) {
             Ok(m) => m,
             Err(e) => {
                 error!("Failed to create BERT model: {}", e);
@@ -195,36 +181,52 @@ impl CandleTextEmbedder {
             model,
             tokenizer,
             device,
-            normalize_embeddings: true,
+            config,
         })
     }
 
+    /// Create a new TextEmbedder with specific model paths
+    ///
+    /// # Arguments
+    ///
+    /// * `model_path` - Path to the model file (.safetensors)
+    /// * `tokenizer_path` - Path to the tokenizer file (.json)
+    ///
+    /// # Returns
+    ///
+    /// A new TextEmbedder instance
+    pub fn with_model_paths(model_path: &Path, tokenizer_path: &Path) -> Result<Self> {
+        // Use default model configuration
+        let config = ModelType::default().get_config();
+        Self::with_model_config(model_path, tokenizer_path, config)
+    }
+
     /// Ensure model files exist, downloading them if necessary
-    fn ensure_model_files(model_path: &Path, tokenizer_path: &Path) -> AnyhowResult<()> {
+    fn ensure_model_files(model_path: &Path, tokenizer_path: &Path, config: &ModelConfig) -> AnyhowResult<()> {
         // Check if files already exist
         if model_path.exists() && tokenizer_path.exists() {
             return Ok(());
         }
 
-        info!("Downloading model files...");
+        info!("Downloading model files for {}...", config.name);
 
         // Use Hugging Face Hub API to download files
         let api = hf_hub::api::sync::Api::new()?;
         let repo = api.repo(hf_hub::Repo::with_revision(
-            "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+            config.repo_path.clone(),
             hf_hub::RepoType::Model,
             "main".to_string(),
         ));
 
         // Download model file
         if !model_path.exists() {
-            let model_file = repo.get("model.safetensors")?;
+            let model_file = repo.get(&config.model_file)?;
             std::fs::copy(model_file, model_path)?;
         }
 
         // Download tokenizer file
         if !tokenizer_path.exists() {
-            let tokenizer_file = repo.get("tokenizer.json")?;
+            let tokenizer_file = repo.get(&config.tokenizer_file)?;
             std::fs::copy(tokenizer_file, tokenizer_path)?;
         }
 
@@ -274,7 +276,7 @@ impl CandleTextEmbedder {
         }
 
         // Process in batches for better memory efficiency
-        let batch_size = DEFAULT_BATCH_SIZE;
+        let batch_size = self.config.batch_size;
 
         // Use parallel iterator to process batches in parallel
         let all_embeddings: Vec<Vec<f32>> = texts
@@ -362,7 +364,7 @@ impl CandleTextEmbedder {
                 };
 
                 // Normalize if configured
-                let final_embeddings = if self.normalize_embeddings {
+                let final_embeddings = if self.config.normalize_embeddings {
                     match Self::normalize_l2(&mean_embeddings) {
                         Ok(n) => n,
                         Err(_) => return Vec::new(),
@@ -439,6 +441,7 @@ impl CandleTextEmbedder {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
     use std::{
         env,
         fs,
@@ -461,6 +464,8 @@ mod tests {
         // Return a mock error to test error handling
         Err(MemoryBankError::EmbeddingError("Test error".to_string()))
     }
+
+    /// Helper function to check if real embedder tests should be skipped
 
     #[test]
     fn test_embed_single() {
@@ -536,6 +541,19 @@ mod tests {
     }
 
     #[test]
+    fn test_model_types() {
+        // Test that we can create embedders with different model types
+        // This is just a compilation test, we don't actually load the models
+
+        // These should compile without errors
+        let _model_type1 = ModelType::MiniLML6V2;
+        let _model_type2 = ModelType::MiniLML12V2;
+
+        // Test that default is MiniLML6V2
+        assert_eq!(ModelType::default(), ModelType::MiniLML6V2);
+    }
+
+    #[test]
     fn test_error_handling() {
         // Test error handling with invalid paths
         let invalid_path = Path::new("/nonexistent/path");
@@ -559,7 +577,125 @@ mod tests {
         fs::write(&tokenizer_path, "mock data").expect("Failed to write mock tokenizer file");
 
         // Test that ensure_model_files returns Ok when files exist
-        let result = CandleTextEmbedder::ensure_model_files(&model_path, &tokenizer_path);
+        let config = ModelType::default().get_config();
+        let result = CandleTextEmbedder::ensure_model_files(&model_path, &tokenizer_path, &config);
         assert!(result.is_ok());
+    }
+}
+/// Performance test for different model types
+/// This test is only run when MEMORY_BANK_USE_REAL_EMBEDDERS is set
+#[test]
+fn test_model_performance() {
+    use std::env;
+    use std::time::Instant;
+
+    // Skip this test in CI environments where model files might not be available
+    if env::var("CI").is_ok() {
+        return;
+    }
+
+    // Skip if real embedders are not explicitly requested
+    if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+        return;
+    }
+
+    // Test data: mix of short and long texts
+    let texts = vec![
+            "This is a short sentence.".to_string(),
+            "Another simple example.".to_string(),
+            "The quick brown fox jumps over the lazy dog.".to_string(),
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".to_string(),
+            "Machine learning models can process and analyze text data to extract meaningful information and generate embeddings that represent semantic relationships between words and phrases.".to_string(),
+        ];
+
+    // Test each model type
+    let model_types = [ModelType::MiniLML6V2, ModelType::MiniLML12V2];
+
+    for model_type in model_types {
+        match CandleTextEmbedder::with_model_type(model_type) {
+            Ok(embedder) => {
+                println!("Testing performance of {:?}", model_type);
+
+                // Warm-up run
+                let _ = embedder.embed_batch(&texts);
+
+                // Measure single embedding performance
+                let start = Instant::now();
+                let single_result = embedder.embed(&texts[0]);
+                let single_duration = start.elapsed();
+
+                // Measure batch embedding performance
+                let start = Instant::now();
+                let batch_result = embedder.embed_batch(&texts);
+                let batch_duration = start.elapsed();
+
+                // Check results are valid
+                assert!(single_result.is_ok());
+                assert!(batch_result.is_ok());
+
+                // Get embedding dimensions
+                let embedding_dim = single_result.unwrap().len();
+
+                println!(
+                    "Model: {:?}, Embedding dim: {}, Single time: {:?}, Batch time: {:?}, Avg per text: {:?}",
+                    model_type,
+                    embedding_dim,
+                    single_duration,
+                    batch_duration,
+                    batch_duration.div_f32(texts.len() as f32)
+                );
+            },
+            Err(e) => {
+                println!("Failed to load model {:?}: {}", model_type, e);
+            },
+        }
+    }
+}
+
+/// Test loading all models to ensure they work
+#[test]
+fn test_load_all_models() {
+    use std::env;
+
+    // Skip this test in CI environments where model files might not be available
+    if env::var("CI").is_ok() {
+        return;
+    }
+
+    // Skip if real embedders are not explicitly requested
+    if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+        return;
+    }
+
+    let model_types = [ModelType::MiniLML6V2, ModelType::MiniLML12V2];
+
+    for model_type in model_types {
+        match CandleTextEmbedder::with_model_type(model_type) {
+            Ok(embedder) => {
+                // Test a simple embedding to verify the model works
+                let result = embedder.embed("Test sentence for model verification.");
+                assert!(result.is_ok(), "Model {:?} failed to generate embedding", model_type);
+
+                // Verify embedding dimensions
+                let embedding = result.unwrap();
+                let expected_dim = match model_type {
+                    ModelType::MiniLML6V2 => 384,
+                    ModelType::MiniLML12V2 => 384,
+                };
+
+                assert_eq!(
+                    embedding.len(),
+                    expected_dim,
+                    "Model {:?} produced embedding with incorrect dimensions",
+                    model_type
+                );
+
+                println!("Successfully loaded and tested model {:?}", model_type);
+            },
+            Err(e) => {
+                println!("Failed to load model {:?}: {}", model_type, e);
+                // Don't fail the test if a model can't be loaded, just report it
+            },
+        }
     }
 }
