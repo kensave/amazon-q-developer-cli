@@ -7,6 +7,8 @@ mod candle_models;
 pub mod mock;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod onnx;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod onnx_models;
 
 pub use candle::CandleTextEmbedder;
 pub use candle_models::ModelType;
