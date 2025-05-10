@@ -28,28 +28,6 @@ use crate::error::{
     Result,
 };
 
-/// Get the best available device for inference
-fn get_best_available_device() -> Device {
-    // Try Metal on macOS
-    // Disabled: Layer norm not supported for selected model
-    // only enable Metal if verified it's compatible.
-
-    // Try CUDA on any platform where it's available
-    match Device::new_cuda(0) {
-        Ok(device) => {
-            info!("Using CUDA acceleration for text embedding");
-            return device;
-        },
-        Err(e) => {
-            debug!("CUDA acceleration not available: {}", e);
-        },
-    }
-
-    // Fall back to CPU
-    info!("Using CPU for text embedding (no GPU acceleration available)");
-    Device::Cpu
-}
-
 /// Text embedding generator using Candle for embedding models
 pub struct CandleTextEmbedder {
     /// The BERT model
@@ -86,20 +64,10 @@ impl CandleTextEmbedder {
         let (model_path, tokenizer_path) = model_config.get_local_paths();
 
         // Create model directory if it doesn't exist
-        let model_dir = model_path.parent().unwrap_or_else(|| Path::new("."));
-        if let Err(err) = std::fs::create_dir_all(model_dir) {
-            error!("Failed to create model directory: {}", err);
-            return Err(MemoryBankError::IoError(err));
-        }
+        ensure_model_directory_exists(&model_path)?;
 
         // Download files if they don't exist
-        match Self::ensure_model_files(&model_path, &tokenizer_path, &model_config) {
-            Ok(_) => {},
-            Err(e) => {
-                error!("Failed to ensure model files: {}", e);
-                return Err(MemoryBankError::EmbeddingError(e.to_string()));
-            },
-        }
+        ensure_model_files(&model_path, &tokenizer_path, &model_config)?;
 
         Self::with_model_config(&model_path, &tokenizer_path, model_config)
     }
@@ -118,62 +86,18 @@ impl CandleTextEmbedder {
     pub fn with_model_config(model_path: &Path, tokenizer_path: &Path, config: ModelConfig) -> Result<Self> {
         info!("Initializing text embedder with model: {:?}", model_path);
 
-        // Automatically detect available parallelism
-        let threads = match available_parallelism() {
-            Ok(n) => n.get(),
-            Err(e) => {
-                error!("Failed to detect available parallelism: {}", e);
-                // Default to 4 threads if detection fails
-                4
-            },
-        };
+        // Initialize thread pool
+        let threads = initialize_thread_pool()?;
         info!("Using {} threads for text embedding", threads);
 
-        // Initialize the global Rayon thread pool once
-        if let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global() {
-            // This is fine - it means the pool is already initialized
-            debug!("Rayon thread pool already initialized or failed: {}", e);
-        }
-
         // Load tokenizer
-        let tokenizer = match Tokenizer::from_file(tokenizer_path) {
-            Ok(t) => t,
-            Err(e) => {
-                error!("Failed to load tokenizer from {:?}: {}", tokenizer_path, e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to load tokenizer: {}",
-                    e
-                )));
-            },
-        };
+        let tokenizer = load_tokenizer(tokenizer_path)?;
 
         // Get the best available device (Metal, CUDA, or CPU)
         let device = get_best_available_device();
 
-        // Load model weights
-        let vb = unsafe {
-            match VarBuilder::from_mmaped_safetensors(&[model_path], DTYPE, &device) {
-                Ok(v) => v,
-                Err(e) => {
-                    error!("Failed to load model weights from {:?}: {}", model_path, e);
-                    return Err(MemoryBankError::EmbeddingError(format!(
-                        "Failed to load model weights: {}",
-                        e
-                    )));
-                },
-            }
-        };
-
-        let model = match BertModel::load(vb, &config.config) {
-            Ok(m) => m,
-            Err(e) => {
-                error!("Failed to create BERT model: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to create BERT model: {}",
-                    e
-                )));
-            },
-        };
+        // Load model
+        let model = load_model(model_path, &config, &device)?;
 
         debug!("Text embedder initialized successfully");
 
@@ -199,46 +123,6 @@ impl CandleTextEmbedder {
         // Use default model configuration
         let config = ModelType::default().get_config();
         Self::with_model_config(model_path, tokenizer_path, config)
-    }
-
-    /// Ensure model files exist, downloading them if necessary
-    fn ensure_model_files(model_path: &Path, tokenizer_path: &Path, config: &ModelConfig) -> AnyhowResult<()> {
-        // Check if files already exist
-        if model_path.exists() && tokenizer_path.exists() {
-            return Ok(());
-        }
-
-        // Create parent directories if they don't exist
-        if let Some(parent) = model_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        if let Some(parent) = tokenizer_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        info!("Downloading model files for {}...", config.name);
-
-        // Use Hugging Face Hub API to download files
-        let api = hf_hub::api::sync::Api::new()?;
-        let repo = api.repo(hf_hub::Repo::with_revision(
-            config.repo_path.clone(),
-            hf_hub::RepoType::Model,
-            "main".to_string(),
-        ));
-
-        // Download model file
-        if !model_path.exists() {
-            let model_file = repo.get(&config.model_file)?;
-            std::fs::copy(model_file, model_path)?;
-        }
-
-        // Download tokenizer file
-        if !tokenizer_path.exists() {
-            let tokenizer_file = repo.get(&config.tokenizer_file)?;
-            std::fs::copy(tokenizer_file, tokenizer_path)?;
-        }
-
-        Ok(())
     }
 
     /// Generate an embedding for a text
@@ -272,16 +156,7 @@ impl CandleTextEmbedder {
     /// A vector of embeddings
     pub fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         // Configure tokenizer with padding
-        let mut tokenizer = self.tokenizer.clone();
-        if let Some(pp) = tokenizer.get_padding_mut() {
-            pp.strategy = tokenizers::PaddingStrategy::BatchLongest;
-        } else {
-            let pp = tokenizers::PaddingParams {
-                strategy: tokenizers::PaddingStrategy::BatchLongest,
-                ..Default::default()
-            };
-            tokenizer.with_padding(Some(pp));
-        }
+        let tokenizer = prepare_tokenizer(&self.tokenizer)?;
 
         // Process in batches for better memory efficiency
         let batch_size = self.config.batch_size;
@@ -289,104 +164,7 @@ impl CandleTextEmbedder {
         // Use parallel iterator to process batches in parallel
         let all_embeddings: Vec<Vec<f32>> = texts
             .par_chunks(batch_size)
-            .flat_map(|batch| {
-                // Tokenize batch
-                let tokens = match tokenizer.encode_batch(batch.to_vec(), true) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("Failed to tokenize texts: {}", e);
-                        return Vec::new();
-                    },
-                };
-
-                // Pre-allocate vectors with exact capacity
-                let mut token_ids = Vec::with_capacity(batch.len());
-                let mut attention_mask = Vec::with_capacity(batch.len());
-
-                // Convert tokens to tensors
-                for tokens in &tokens {
-                    let ids = tokens.get_ids().to_vec();
-                    let mask = tokens.get_attention_mask().to_vec();
-
-                    let ids_tensor = match Tensor::new(ids.as_slice(), &self.device) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            error!("Failed to create token_ids tensor: {}", e);
-                            return Vec::new();
-                        },
-                    };
-
-                    let mask_tensor = match Tensor::new(mask.as_slice(), &self.device) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            error!("Failed to create attention_mask tensor: {}", e);
-                            return Vec::new();
-                        },
-                    };
-
-                    token_ids.push(ids_tensor);
-                    attention_mask.push(mask_tensor);
-                }
-
-                // Stack tensors into batches
-                let token_ids = match Tensor::stack(&token_ids, 0) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("Failed to stack token_ids tensors: {}", e);
-                        return Vec::new();
-                    },
-                };
-
-                let attention_mask = match Tensor::stack(&attention_mask, 0) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("Failed to stack attention_mask tensors: {}", e);
-                        return Vec::new();
-                    },
-                };
-
-                let token_type_ids = match token_ids.zeros_like() {
-                    Ok(t) => t,
-                    Err(e) => {
-                        error!("Failed to create zeros tensor for token_type_ids: {}", e);
-                        return Vec::new();
-                    },
-                };
-
-                // Run model inference
-                let embeddings = match self.model.forward(&token_ids, &token_type_ids, Some(&attention_mask)) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        error!("Model inference failed: {}", e);
-                        return Vec::new();
-                    },
-                };
-
-                // Apply mean pooling
-                let mean_embeddings = match embeddings.mean(1) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        error!("Failed to compute mean embeddings: {}", e);
-                        return Vec::new();
-                    },
-                };
-
-                // Normalize if configured
-                let final_embeddings = if self.config.normalize_embeddings {
-                    match Self::normalize_l2(&mean_embeddings) {
-                        Ok(n) => n,
-                        Err(_) => return Vec::new(),
-                    }
-                } else {
-                    mean_embeddings
-                };
-
-                // Convert to Vec<Vec<f32>>
-                final_embeddings.to_vec2::<f32>().unwrap_or_else(|e| {
-                    error!("Failed to convert embeddings to vector: {}", e);
-                    Vec::new()
-                })
-            })
+            .flat_map(|batch| self.process_batch(batch, &tokenizer))
             .collect();
 
         // Check if we have the correct number of embeddings
@@ -399,57 +177,348 @@ impl CandleTextEmbedder {
         Ok(all_embeddings)
     }
 
-    /// Normalize embedding to unit length (L2 norm)
-    fn normalize_l2(v: &Tensor) -> Result<Tensor> {
-        // Calculate squared values
-        let squared = match v.sqr() {
-            Ok(s) => s,
+    /// Process a batch of texts to generate embeddings
+    fn process_batch(&self, batch: &[String], tokenizer: &Tokenizer) -> Vec<Vec<f32>> {
+        // Tokenize batch
+        let tokens = match tokenizer.encode_batch(batch.to_vec(), true) {
+            Ok(t) => t,
             Err(e) => {
-                error!("Failed to square tensor for L2 normalization: {}", e);
+                error!("Failed to tokenize texts: {}", e);
+                return Vec::new();
+            },
+        };
+
+        // Convert tokens to tensors
+        let (token_ids, attention_mask) = match create_tensors_from_tokens(&tokens, &self.device) {
+            Ok(tensors) => tensors,
+            Err(_) => return Vec::new(),
+        };
+
+        // Create token type ids
+        let token_type_ids = match token_ids.zeros_like() {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to create zeros tensor for token_type_ids: {}", e);
+                return Vec::new();
+            },
+        };
+
+        // Run model inference and process results
+        self.run_inference_and_process(&token_ids, &token_type_ids, &attention_mask)
+            .unwrap_or_else(|_| Vec::new())
+    }
+
+    /// Run model inference and process the results
+    fn run_inference_and_process(
+        &self,
+        token_ids: &Tensor,
+        token_type_ids: &Tensor,
+        attention_mask: &Tensor,
+    ) -> Result<Vec<Vec<f32>>> {
+        // Run model inference
+        let embeddings = match self.model.forward(token_ids, token_type_ids, Some(attention_mask)) {
+            Ok(e) => e,
+            Err(e) => {
+                error!("Model inference failed: {}", e);
                 return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to square tensor: {}",
+                    "Model inference failed: {}",
                     e
                 )));
             },
         };
 
-        // Sum along last dimension and keep dimensions
-        let sum_squared = match squared.sum_keepdim(1) {
-            Ok(s) => s,
+        // Apply mean pooling
+        let mean_embeddings = match embeddings.mean(1) {
+            Ok(m) => m,
             Err(e) => {
-                error!("Failed to sum squared values: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!("Failed to sum tensor: {}", e)));
-            },
-        };
-
-        // Calculate square root for L2 norm
-        let norm = match sum_squared.sqrt() {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Failed to compute square root for normalization: {}", e);
+                error!("Failed to compute mean embeddings: {}", e);
                 return Err(MemoryBankError::EmbeddingError(format!(
-                    "Failed to compute square root: {}",
+                    "Failed to compute mean embeddings: {}",
                     e
                 )));
             },
         };
 
-        // Divide by norm
-        let normalized = match v.broadcast_div(&norm) {
-            Ok(n) => n,
+        // Normalize if configured
+        let final_embeddings = if self.config.normalize_embeddings {
+            normalize_l2(&mean_embeddings)?
+        } else {
+            mean_embeddings
+        };
+
+        // Convert to Vec<Vec<f32>>
+        match final_embeddings.to_vec2::<f32>() {
+            Ok(v) => Ok(v),
             Err(e) => {
-                error!("Failed to normalize by division: {}", e);
-                return Err(MemoryBankError::EmbeddingError(format!("Failed to normalize: {}", e)));
+                error!("Failed to convert embeddings to vector: {}", e);
+                Err(MemoryBankError::EmbeddingError(format!(
+                    "Failed to convert embeddings to vector: {}",
+                    e
+                )))
+            },
+        }
+    }
+}
+
+/// Ensure model directory exists
+fn ensure_model_directory_exists(model_path: &Path) -> Result<()> {
+    let model_dir = model_path.parent().unwrap_or_else(|| Path::new("."));
+    if let Err(err) = std::fs::create_dir_all(model_dir) {
+        error!("Failed to create model directory: {}", err);
+        return Err(MemoryBankError::IoError(err));
+    }
+    Ok(())
+}
+
+/// Ensure model files exist, downloading them if necessary
+fn ensure_model_files(model_path: &Path, tokenizer_path: &Path, config: &ModelConfig) -> Result<()> {
+    // Check if files already exist
+    if model_path.exists() && tokenizer_path.exists() {
+        return Ok(());
+    }
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = model_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Err(MemoryBankError::IoError(e));
+        }
+    }
+    if let Some(parent) = tokenizer_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Err(MemoryBankError::IoError(e));
+        }
+    }
+
+    info!("Downloading model files for {}...", config.name);
+
+    // Download files using Hugging Face Hub API
+    download_model_files(model_path, tokenizer_path, config).map_err(|e| {
+        error!("Failed to download model files: {}", e);
+        MemoryBankError::EmbeddingError(e.to_string())
+    })
+}
+
+/// Download model files from Hugging Face Hub
+fn download_model_files(model_path: &Path, tokenizer_path: &Path, config: &ModelConfig) -> AnyhowResult<()> {
+    // Use Hugging Face Hub API to download files
+    let api = hf_hub::api::sync::Api::new()?;
+    let repo = api.repo(hf_hub::Repo::with_revision(
+        config.repo_path.clone(),
+        hf_hub::RepoType::Model,
+        "main".to_string(),
+    ));
+
+    // Download model file if it doesn't exist
+    if !model_path.exists() {
+        let model_file = repo.get(&config.model_file)?;
+        std::fs::copy(model_file, model_path)?;
+    }
+
+    // Download tokenizer file if it doesn't exist
+    if !tokenizer_path.exists() {
+        let tokenizer_file = repo.get(&config.tokenizer_file)?;
+        std::fs::copy(tokenizer_file, tokenizer_path)?;
+    }
+
+    Ok(())
+}
+
+/// Initialize thread pool for parallel processing
+fn initialize_thread_pool() -> Result<usize> {
+    // Automatically detect available parallelism
+    let threads = match available_parallelism() {
+        Ok(n) => n.get(),
+        Err(e) => {
+            error!("Failed to detect available parallelism: {}", e);
+            // Default to 4 threads if detection fails
+            4
+        },
+    };
+
+    // Initialize the global Rayon thread pool once
+    if let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(threads).build_global() {
+        // This is fine - it means the pool is already initialized
+        debug!("Rayon thread pool already initialized or failed: {}", e);
+    }
+
+    Ok(threads)
+}
+
+/// Load tokenizer from file
+fn load_tokenizer(tokenizer_path: &Path) -> Result<Tokenizer> {
+    match Tokenizer::from_file(tokenizer_path) {
+        Ok(t) => Ok(t),
+        Err(e) => {
+            error!("Failed to load tokenizer from {:?}: {}", tokenizer_path, e);
+            Err(MemoryBankError::EmbeddingError(format!(
+                "Failed to load tokenizer: {}",
+                e
+            )))
+        },
+    }
+}
+
+/// Get the best available device for inference
+fn get_best_available_device() -> Device {
+    // Always use CPU for embedding to avoid hardware acceleration issues
+    info!("Using CPU for text embedding (hardware acceleration disabled)");
+    Device::Cpu
+}
+
+/// Load model from file
+fn load_model(model_path: &Path, config: &ModelConfig, device: &Device) -> Result<BertModel> {
+    // Load model weights
+    let vb = unsafe {
+        match VarBuilder::from_mmaped_safetensors(&[model_path], DTYPE, device) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Failed to load model weights from {:?}: {}", model_path, e);
+                return Err(MemoryBankError::EmbeddingError(format!(
+                    "Failed to load model weights: {}",
+                    e
+                )));
+            },
+        }
+    };
+
+    // Create BERT model
+    match BertModel::load(vb, &config.config) {
+        Ok(m) => Ok(m),
+        Err(e) => {
+            error!("Failed to create BERT model: {}", e);
+            Err(MemoryBankError::EmbeddingError(format!(
+                "Failed to create BERT model: {}",
+                e
+            )))
+        },
+    }
+}
+
+/// Prepare tokenizer with padding configuration
+fn prepare_tokenizer(tokenizer: &Tokenizer) -> Result<Tokenizer> {
+    let mut tokenizer = tokenizer.clone();
+    if let Some(pp) = tokenizer.get_padding_mut() {
+        pp.strategy = tokenizers::PaddingStrategy::BatchLongest;
+    } else {
+        let pp = tokenizers::PaddingParams {
+            strategy: tokenizers::PaddingStrategy::BatchLongest,
+            ..Default::default()
+        };
+        tokenizer.with_padding(Some(pp));
+    }
+    Ok(tokenizer)
+}
+
+/// Create tensors from tokenized inputs
+fn create_tensors_from_tokens(tokens: &[tokenizers::Encoding], device: &Device) -> Result<(Tensor, Tensor)> {
+    // Pre-allocate vectors with exact capacity
+    let mut token_ids = Vec::with_capacity(tokens.len());
+    let mut attention_mask = Vec::with_capacity(tokens.len());
+
+    // Convert tokens to tensors
+    for tokens in tokens {
+        let ids = tokens.get_ids().to_vec();
+        let mask = tokens.get_attention_mask().to_vec();
+
+        let ids_tensor = match Tensor::new(ids.as_slice(), device) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to create token_ids tensor: {}", e);
+                return Err(MemoryBankError::EmbeddingError(format!(
+                    "Failed to create token_ids tensor: {}",
+                    e
+                )));
             },
         };
 
-        Ok(normalized)
+        let mask_tensor = match Tensor::new(mask.as_slice(), device) {
+            Ok(t) => t,
+            Err(e) => {
+                error!("Failed to create attention_mask tensor: {}", e);
+                return Err(MemoryBankError::EmbeddingError(format!(
+                    "Failed to create attention_mask tensor: {}",
+                    e
+                )));
+            },
+        };
+
+        token_ids.push(ids_tensor);
+        attention_mask.push(mask_tensor);
+    }
+
+    // Stack tensors into batches
+    let token_ids = match Tensor::stack(&token_ids, 0) {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Failed to stack token_ids tensors: {}", e);
+            return Err(MemoryBankError::EmbeddingError(format!(
+                "Failed to stack token_ids tensors: {}",
+                e
+            )));
+        },
+    };
+
+    let attention_mask = match Tensor::stack(&attention_mask, 0) {
+        Ok(t) => t,
+        Err(e) => {
+            error!("Failed to stack attention_mask tensors: {}", e);
+            return Err(MemoryBankError::EmbeddingError(format!(
+                "Failed to stack attention_mask tensors: {}",
+                e
+            )));
+        },
+    };
+
+    Ok((token_ids, attention_mask))
+}
+
+/// Normalize embedding to unit length (L2 norm)
+fn normalize_l2(v: &Tensor) -> Result<Tensor> {
+    // Calculate squared values
+    let squared = match v.sqr() {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to square tensor for L2 normalization: {}", e);
+            return Err(MemoryBankError::EmbeddingError(format!(
+                "Failed to square tensor: {}",
+                e
+            )));
+        },
+    };
+
+    // Sum along last dimension and keep dimensions
+    let sum_squared = match squared.sum_keepdim(1) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to sum squared values: {}", e);
+            return Err(MemoryBankError::EmbeddingError(format!("Failed to sum tensor: {}", e)));
+        },
+    };
+
+    // Calculate square root for L2 norm
+    let norm = match sum_squared.sqrt() {
+        Ok(n) => n,
+        Err(e) => {
+            error!("Failed to compute square root for normalization: {}", e);
+            return Err(MemoryBankError::EmbeddingError(format!(
+                "Failed to compute square root: {}",
+                e
+            )));
+        },
+    };
+
+    // Divide by norm
+    match v.broadcast_div(&norm) {
+        Ok(n) => Ok(n),
+        Err(e) => {
+            error!("Failed to normalize by division: {}", e);
+            Err(MemoryBankError::EmbeddingError(format!("Failed to normalize: {}", e)))
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-
     use std::{
         env,
         fs,
@@ -474,16 +543,34 @@ mod tests {
     }
 
     /// Helper function to check if real embedder tests should be skipped
+    fn should_skip_real_embedder_tests() -> bool {
+        // Skip if real embedders are not explicitly requested
+        if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+            return true;
+        }
+
+        // Skip in CI environments
+        if env::var("CI").is_ok() {
+            return true;
+        }
+
+        false
+    }
+
+    /// Helper function to create test data for performance tests
+    fn create_test_data() -> Vec<String> {
+        vec![
+            "This is a short sentence.".to_string(),
+            "Another simple example.".to_string(),
+            "The quick brown fox jumps over the lazy dog.".to_string(),
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".to_string(),
+            "Machine learning models can process and analyze text data to extract meaningful information and generate embeddings that represent semantic relationships between words and phrases.".to_string(),
+        ]
+    }
 
     #[test]
     fn test_embed_single() {
-        // Skip this test in CI environments where model files might not be available
-        if env::var("CI").is_ok() {
-            return;
-        }
-
-        // Skip if real embedders are not explicitly requested
-        if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+        if should_skip_real_embedder_tests() {
             return;
         }
 
@@ -508,13 +595,7 @@ mod tests {
 
     #[test]
     fn test_embed_batch() {
-        // Skip this test in CI environments where model files might not be available
-        if env::var("CI").is_ok() {
-            return;
-        }
-
-        // Skip if real embedders are not explicitly requested
-        if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+        if should_skip_real_embedder_tests() {
             return;
         }
 
@@ -586,45 +667,36 @@ mod tests {
 
         // Test that ensure_model_files returns Ok when files exist
         let config = ModelType::default().get_config();
-        let result = CandleTextEmbedder::ensure_model_files(&model_path, &tokenizer_path, &config);
+        let result = ensure_model_files(&model_path, &tokenizer_path, &config);
         assert!(result.is_ok());
     }
-}
-/// Performance test for different model types
-/// This test is only run when MEMORY_BANK_USE_REAL_EMBEDDERS is set
-#[test]
-fn test_model_performance() {
-    use std::env;
 
-    // Skip this test in CI environments where model files might not be available
-    if env::var("CI").is_ok() {
-        return;
+    /// Performance test for different model types
+    #[test]
+    fn test_model_performance() {
+        if should_skip_real_embedder_tests() {
+            return;
+        }
+
+        // Test data
+        let texts = create_test_data();
+
+        // Test each model type
+        let model_types = [ModelType::MiniLML6V2, ModelType::MiniLML12V2];
+
+        for model_type in model_types {
+            run_performance_test(model_type, &texts);
+        }
     }
 
-    // Skip if real embedders are not explicitly requested
-    if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
-        return;
-    }
-
-    // Test data: mix of short and long texts
-    let texts = vec![
-            "This is a short sentence.".to_string(),
-            "Another simple example.".to_string(),
-            "The quick brown fox jumps over the lazy dog.".to_string(),
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".to_string(),
-            "Machine learning models can process and analyze text data to extract meaningful information and generate embeddings that represent semantic relationships between words and phrases.".to_string(),
-        ];
-
-    // Test each model type
-    let model_types = [ModelType::MiniLML6V2, ModelType::MiniLML12V2];
-
-    for model_type in model_types {
+    /// Run performance test for a specific model type
+    fn run_performance_test(model_type: ModelType, texts: &[String]) {
         match CandleTextEmbedder::with_model_type(model_type) {
             Ok(embedder) => {
                 println!("Testing performance of {:?}", model_type);
 
                 // Warm-up run
-                let _ = embedder.embed_batch(&texts);
+                let _ = embedder.embed_batch(texts);
 
                 // Measure single embedding performance
                 let start = std::time::Instant::now();
@@ -633,7 +705,7 @@ fn test_model_performance() {
 
                 // Measure batch embedding performance
                 let start = std::time::Instant::now();
-                let batch_result = embedder.embed_batch(&texts);
+                let batch_result = embedder.embed_batch(texts);
                 let batch_duration = start.elapsed();
 
                 // Check results are valid
@@ -657,26 +729,23 @@ fn test_model_performance() {
             },
         }
     }
-}
 
-/// Test loading all models to ensure they work
-#[test]
-fn test_load_all_models() {
-    use std::env;
+    /// Test loading all models to ensure they work
+    #[test]
+    fn test_load_all_models() {
+        if should_skip_real_embedder_tests() {
+            return;
+        }
 
-    // Skip this test in CI environments where model files might not be available
-    if env::var("CI").is_ok() {
-        return;
+        let model_types = [ModelType::MiniLML6V2, ModelType::MiniLML12V2];
+
+        for model_type in model_types {
+            test_model_loading(model_type);
+        }
     }
 
-    // Skip if real embedders are not explicitly requested
-    if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
-        return;
-    }
-
-    let model_types = [ModelType::MiniLML6V2, ModelType::MiniLML12V2];
-
-    for model_type in model_types {
+    /// Test loading a specific model
+    fn test_model_loading(model_type: ModelType) {
         match CandleTextEmbedder::with_model_type(model_type) {
             Ok(embedder) => {
                 // Test a simple embedding to verify the model works
@@ -704,5 +773,22 @@ fn test_load_all_models() {
                 // Don't fail the test if a model can't be loaded, just report it
             },
         }
+    }
+}
+impl crate::embedding::BenchmarkableEmbedder for CandleTextEmbedder {
+    fn model_name(&self) -> String {
+        format!("Candle-{}", self.config.name)
+    }
+
+    fn embedding_dim(&self) -> usize {
+        self.config.config.hidden_size
+    }
+
+    fn embed_single(&self, text: &str) -> Vec<f32> {
+        self.embed(text).unwrap()
+    }
+
+    fn embed_batch(&self, texts: &[String]) -> Vec<Vec<f32>> {
+        self.embed_batch(texts).unwrap()
     }
 }

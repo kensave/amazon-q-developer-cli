@@ -49,25 +49,11 @@ impl TextEmbedder {
     pub fn with_model_type(model_type: OnnxModelType) -> Result<Self> {
         info!("Initializing text embedder with fastembed model: {:?}", model_type);
 
-        // Get the models directory from the base directory
-        let base_dir = crate::config::get_default_base_dir();
-        let models_dir = crate::config::get_models_dir(&base_dir);
+        // Prepare the models directory
+        let models_dir = prepare_models_directory()?;
 
-        // Ensure the models directory exists
-        std::fs::create_dir_all(&models_dir)?;
-
-        // Initialize the embedding model with the models directory as cache dir
-        let model = match TextEmbedding::try_new(
-            InitOptions::new(model_type.get_fastembed_model())
-                .with_cache_dir(models_dir)
-                .with_show_download_progress(true),
-        ) {
-            Ok(model) => model,
-            Err(e) => {
-                error!("Failed to initialize fastembed model: {}", e);
-                return Err(MemoryBankError::FastembedError(e.to_string()));
-            },
-        };
+        // Initialize the embedding model
+        let model = initialize_model(model_type, &models_dir)?;
 
         debug!(
             "Fastembed text embedder initialized successfully with model: {:?}",
@@ -123,9 +109,50 @@ impl TextEmbedder {
     }
 }
 
+/// Prepare the models directory
+///
+/// # Returns
+///
+/// The models directory path
+fn prepare_models_directory() -> Result<std::path::PathBuf> {
+    // Get the models directory from the base directory
+    let base_dir = crate::config::get_default_base_dir();
+    let models_dir = crate::config::get_models_dir(&base_dir);
+
+    // Ensure the models directory exists
+    std::fs::create_dir_all(&models_dir)?;
+
+    Ok(models_dir)
+}
+
+/// Initialize the embedding model
+///
+/// # Arguments
+///
+/// * `model_type` - The model type to use
+/// * `models_dir` - The models directory path
+///
+/// # Returns
+///
+/// The initialized embedding model
+fn initialize_model(model_type: OnnxModelType, models_dir: &std::path::Path) -> Result<TextEmbedding> {
+    match TextEmbedding::try_new(
+        InitOptions::new(model_type.get_fastembed_model())
+            .with_cache_dir(models_dir.to_path_buf())
+            .with_show_download_progress(true),
+    ) {
+        Ok(model) => Ok(model),
+        Err(e) => {
+            error!("Failed to initialize fastembed model: {}", e);
+            Err(MemoryBankError::FastembedError(e.to_string()))
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::time::Instant;
 
     use super::*;
 
@@ -138,6 +165,17 @@ mod tests {
         }
 
         false
+    }
+
+    /// Helper function to create test data for performance tests
+    fn create_test_data() -> Vec<String> {
+        vec![
+            "This is a short sentence.".to_string(),
+            "Another simple example.".to_string(),
+            "The quick brown fox jumps over the lazy dog.".to_string(),
+            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".to_string(),
+            "Machine learning models can process and analyze text data to extract meaningful information and generate embeddings that represent semantic relationships between words and phrases.".to_string(),
+        ]
     }
 
     #[test]
@@ -202,9 +240,6 @@ mod tests {
     /// This test is only run when MEMORY_BANK_USE_REAL_EMBEDDERS is set
     #[test]
     fn test_model_performance() {
-        use std::env;
-        use std::time::Instant;
-
         // Skip this test in CI environments where model files might not be available
         if env::var("CI").is_ok() {
             return;
@@ -215,64 +250,61 @@ mod tests {
             return;
         }
 
-        // Test data: mix of short and long texts
-        let texts = vec![
-            "This is a short sentence.".to_string(),
-            "Another simple example.".to_string(),
-            "The quick brown fox jumps over the lazy dog.".to_string(),
-            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.".to_string(),
-            "Machine learning models can process and analyze text data to extract meaningful information and generate embeddings that represent semantic relationships between words and phrases.".to_string(),
-        ];
+        // Test data
+        let texts = create_test_data();
 
         // Test each model type
         let model_types = [OnnxModelType::MiniLML6V2Q, OnnxModelType::MiniLML12V2Q];
 
         for model_type in model_types {
-            match TextEmbedder::with_model_type(model_type) {
-                Ok(embedder) => {
-                    println!("Testing performance of {:?}", model_type);
+            run_performance_test(model_type, &texts);
+        }
+    }
 
-                    // Warm-up run
-                    let _ = embedder.embed_batch(&texts);
+    /// Run performance test for a specific model type
+    fn run_performance_test(model_type: OnnxModelType, texts: &[String]) {
+        match TextEmbedder::with_model_type(model_type) {
+            Ok(embedder) => {
+                println!("Testing performance of {:?}", model_type);
 
-                    // Measure single embedding performance
-                    let start = Instant::now();
-                    let single_result = embedder.embed(&texts[0]);
-                    let single_duration = start.elapsed();
+                // Warm-up run
+                let _ = embedder.embed_batch(texts);
 
-                    // Measure batch embedding performance
-                    let start = Instant::now();
-                    let batch_result = embedder.embed_batch(&texts);
-                    let batch_duration = start.elapsed();
+                // Measure single embedding performance
+                let start = Instant::now();
+                let single_result = embedder.embed(&texts[0]);
+                let single_duration = start.elapsed();
 
-                    // Check results are valid
-                    assert!(single_result.is_ok());
-                    assert!(batch_result.is_ok());
+                // Measure batch embedding performance
+                let start = Instant::now();
+                let batch_result = embedder.embed_batch(texts);
+                let batch_duration = start.elapsed();
 
-                    // Get embedding dimensions
-                    let embedding_dim = single_result.unwrap().len();
+                // Check results are valid
+                assert!(single_result.is_ok());
+                assert!(batch_result.is_ok());
 
-                    println!(
-                        "Model: {:?}, Embedding dim: {}, Single time: {:?}, Batch time: {:?}, Avg per text: {:?}",
-                        model_type,
-                        embedding_dim,
-                        single_duration,
-                        batch_duration,
-                        batch_duration.div_f32(texts.len() as f32)
-                    );
-                },
-                Err(e) => {
-                    println!("Failed to load model {:?}: {}", model_type, e);
-                },
-            }
+                // Get embedding dimensions
+                let embedding_dim = single_result.unwrap().len();
+
+                println!(
+                    "Model: {:?}, Embedding dim: {}, Single time: {:?}, Batch time: {:?}, Avg per text: {:?}",
+                    model_type,
+                    embedding_dim,
+                    single_duration,
+                    batch_duration,
+                    batch_duration.div_f32(texts.len() as f32)
+                );
+            },
+            Err(e) => {
+                println!("Failed to load model {:?}: {}", model_type, e);
+            },
         }
     }
 
     /// Test loading all models to ensure they work
     #[test]
     fn test_load_all_models() {
-        use std::env;
-
         // Skip this test in CI environments where model files might not be available
         if env::var("CI").is_ok() {
             return;
@@ -286,30 +318,52 @@ mod tests {
         let model_types = [OnnxModelType::MiniLML6V2Q, OnnxModelType::MiniLML12V2Q];
 
         for model_type in model_types {
-            match TextEmbedder::with_model_type(model_type) {
-                Ok(embedder) => {
-                    // Test a simple embedding to verify the model works
-                    let result = embedder.embed("Test sentence for model verification.");
-                    assert!(result.is_ok(), "Model {:?} failed to generate embedding", model_type);
-
-                    // Verify embedding dimensions
-                    let embedding = result.unwrap();
-                    let expected_dim = model_type.get_embedding_dim();
-
-                    assert_eq!(
-                        embedding.len(),
-                        expected_dim,
-                        "Model {:?} produced embedding with incorrect dimensions",
-                        model_type
-                    );
-
-                    println!("Successfully loaded and tested model {:?}", model_type);
-                },
-                Err(e) => {
-                    println!("Failed to load model {:?}: {}", model_type, e);
-                    // Don't fail the test if a model can't be loaded, just report it
-                },
-            }
+            test_model_loading(model_type);
         }
+    }
+
+    /// Test loading a specific model
+    fn test_model_loading(model_type: OnnxModelType) {
+        match TextEmbedder::with_model_type(model_type) {
+            Ok(embedder) => {
+                // Test a simple embedding to verify the model works
+                let result = embedder.embed("Test sentence for model verification.");
+                assert!(result.is_ok(), "Model {:?} failed to generate embedding", model_type);
+
+                // Verify embedding dimensions
+                let embedding = result.unwrap();
+                let expected_dim = model_type.get_embedding_dim();
+
+                assert_eq!(
+                    embedding.len(),
+                    expected_dim,
+                    "Model {:?} produced embedding with incorrect dimensions",
+                    model_type
+                );
+
+                println!("Successfully loaded and tested model {:?}", model_type);
+            },
+            Err(e) => {
+                println!("Failed to load model {:?}: {}", model_type, e);
+                // Don't fail the test if a model can't be loaded, just report it
+            },
+        }
+    }
+}
+impl crate::embedding::BenchmarkableEmbedder for TextEmbedder {
+    fn model_name(&self) -> String {
+        format!("ONNX-{}", self.model_type().get_model_name())
+    }
+
+    fn embedding_dim(&self) -> usize {
+        self.model_type().get_embedding_dim()
+    }
+
+    fn embed_single(&self, text: &str) -> Vec<f32> {
+        self.embed(text).unwrap()
+    }
+
+    fn embed_batch(&self, texts: &[String]) -> Vec<Vec<f32>> {
+        self.embed_batch(texts).unwrap()
     }
 }
