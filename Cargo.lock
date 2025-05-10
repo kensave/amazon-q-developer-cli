@@ -5669,32 +5669,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "memory_bank_client"
-version = "1.10.0"
-dependencies = [
- "anyhow",
- "candle-core",
- "candle-nn",
- "candle-transformers",
- "chrono",
- "dirs",
- "fastembed",
- "hf-hub",
- "hnsw_rs",
- "indicatif",
- "once_cell",
- "rayon",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.12",
- "tokenizers",
- "tracing",
- "uuid",
- "walkdir",
-]
-
-[[package]]
 name = "metal"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -4,15 +4,15 @@ use std::{
     fs,
 };
 
-use memory_bank_client::MemoryBankClient;
-use memory_bank_client::types::ProgressStatus;
+use semantic_search_client::SemanticSearchClient;
+use semantic_search_client::types::ProgressStatus;
 
 #[test]
 #[ignore] // Ignore this test as it requires downloading models
 fn test_add_context_from_path_with_directory() {
     // Create a temporary directory for the test
-    let temp_dir = env::temp_dir().join("memory_bank_test_dir");
-    let base_dir = temp_dir.join("memory_bank");
+    let temp_dir = env::temp_dir().join("semantic_search_test_dir");
+    let base_dir = temp_dir.join("semantic_search");
     fs::create_dir_all(&base_dir).unwrap();
 
     // Create a test directory with a file
@@ -21,8 +21,8 @@ fn test_add_context_from_path_with_directory() {
     let test_file = test_dir.join("test.txt");
     fs::write(&test_file, "This is a test file").unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir).unwrap();
 
     // Add a context from the directory
     let _context_id = client
@@ -59,8 +59,8 @@ fn test_add_context_from_path_with_file() {
     let test_file = temp_dir.join("test.txt");
     fs::write(&test_file, "This is a test file").unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir).unwrap();
 
     // Add a context from the file
     let _context_id = client
@@ -88,8 +88,8 @@ fn test_add_context_from_path_with_invalid_path() {
     let base_dir = temp_dir.join("memory_bank");
     fs::create_dir_all(&base_dir).unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir).unwrap();
 
     // Try to add a context from an invalid path
     let invalid_path = Path::new("/path/that/does/not/exist");
@@ -126,8 +126,8 @@ fn test_backward_compatibility() {
     let test_file = test_dir.join("test.txt");
     fs::write(&test_file, "This is a test file").unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir).unwrap();
 
     // Add a context using the original method
     let _context_id = client

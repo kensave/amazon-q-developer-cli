@@ -52,7 +52,7 @@ mod tests {
         INIT.call_once(|| {
             // Initialize with test config
             let _ = std::panic::catch_unwind(|| {
-                let _config = config::MemoryConfig {
+                let _config = config::SemanticSearchConfig {
                     chunk_size: 50,
                     chunk_overlap: 10,
                     default_results: 5,

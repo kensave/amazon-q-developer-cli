@@ -3,8 +3,8 @@ use std::{
     fs,
 };
 
-use memory_bank_client::config;
-use memory_bank_client::processing::chunk_text;
+use semantic_search_client::config;
+use semantic_search_client::processing::text_chunker::chunk_text;
 
 #[test]
 fn test_chunk_text() {

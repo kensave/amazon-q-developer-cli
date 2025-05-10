@@ -4,13 +4,13 @@ use std::{
     fs,
 };
 
-use memory_bank_client::config;
-use memory_bank_client::processing::process_file;
+use semantic_search_client::config;
+use semantic_search_client::processing::file_processor::process_file;
 
 #[test]
 fn test_process_text_file() {
     // Create a temporary directory for the test
-    let temp_dir = env::temp_dir().join("memory_bank_test_process_file");
+    let temp_dir = env::temp_dir().join("semantic_search_test_process_file");
     fs::create_dir_all(&temp_dir).unwrap();
 
     // Initialize config

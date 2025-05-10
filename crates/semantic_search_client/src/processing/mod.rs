@@ -1,5 +1,7 @@
-mod file_processor;
-mod text_chunker;
+/// File processing utilities for handling different file types and extracting content
+pub mod file_processor;
+/// Text chunking utilities for breaking down text into manageable pieces for embedding
+pub mod text_chunker;
 
 pub use file_processor::{
     get_file_type,

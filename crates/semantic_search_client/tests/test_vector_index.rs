@@ -1,4 +1,4 @@
-use memory_bank_client::index::VectorIndex;
+use semantic_search_client::index::VectorIndex;
 
 #[test]
 fn test_vector_index_creation() {

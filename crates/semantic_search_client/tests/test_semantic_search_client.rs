@@ -3,23 +3,23 @@ use std::{
     fs,
 };
 
-use memory_bank_client::MemoryBankClient;
+use semantic_search_client::SemanticSearchClient;
 
 #[test]
 fn test_client_initialization() {
     // Create a temporary directory for the test
-    let temp_dir = env::temp_dir().join("memory_bank_test_client_init");
-    let base_dir = temp_dir.join("memory_bank");
+    let temp_dir = env::temp_dir().join("semantic_search_test_client_init");
+    let base_dir = temp_dir.join("semantic_search");
     fs::create_dir_all(&base_dir).unwrap();
 
-    // Create a memory bank client
-    let client = MemoryBankClient::new(base_dir.clone()).unwrap();
+    // Create a semantic search client
+    let client = SemanticSearchClient::new(base_dir.clone()).unwrap();
 
     // Verify the client was created successfully
     assert_eq!(client.get_contexts().len(), 0);
 
     // Test with default directory
-    let client = MemoryBankClient::new_with_default_dir().unwrap();
+    let client = SemanticSearchClient::new_with_default_dir().unwrap();
     assert_eq!(client.get_contexts().len(), 0);
 
     // Clean up
@@ -29,12 +29,12 @@ fn test_client_initialization() {
 #[test]
 fn test_add_context_from_text() {
     // Create a temporary directory for the test
-    let temp_dir = env::temp_dir().join("memory_bank_test_add_text");
-    let base_dir = temp_dir.join("memory_bank");
+    let temp_dir = env::temp_dir().join("semantic_search_test_add_text");
+    let base_dir = temp_dir.join("semantic_search");
     fs::create_dir_all(&base_dir).unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir).unwrap();
 
     // Add a context from text
     let context_id = client
@@ -64,12 +64,12 @@ fn test_add_context_from_text() {
 #[test]
 fn test_search_all_contexts() {
     // Create a temporary directory for the test
-    let temp_dir = env::temp_dir().join("memory_bank_test_search_all");
-    let base_dir = temp_dir.join("memory_bank");
+    let temp_dir = env::temp_dir().join("semantic_search_test_search_all");
+    let base_dir = temp_dir.join("semantic_search");
     fs::create_dir_all(&base_dir).unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir).unwrap();
 
     // Add multiple contexts
     let _id1 = client
@@ -105,16 +105,16 @@ fn test_search_all_contexts() {
 #[test]
 fn test_persistent_context() {
     // Create a temporary directory for the test
-    let temp_dir = env::temp_dir().join("memory_bank_test_persistent");
-    let base_dir = temp_dir.join("memory_bank");
+    let temp_dir = env::temp_dir().join("semantic_search_test_persistent");
+    let base_dir = temp_dir.join("semantic_search");
     fs::create_dir_all(&base_dir).unwrap();
 
     // Create a test file
     let test_file = temp_dir.join("test.txt");
     fs::write(&test_file, "This is a test file for persistent context").unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir.clone()).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir.clone()).unwrap();
 
     // Add a volatile context
     let context_id = client
@@ -132,7 +132,7 @@ fn test_persistent_context() {
         .unwrap();
 
     // Create a new client to verify persistence
-    let client2 = MemoryBankClient::new(base_dir).unwrap();
+    let client2 = SemanticSearchClient::new(base_dir).unwrap();
     let contexts = client2.get_contexts();
 
     // Verify the context was persisted
@@ -145,12 +145,12 @@ fn test_persistent_context() {
 #[test]
 fn test_remove_context() {
     // Create a temporary directory for the test
-    let temp_dir = env::temp_dir().join("memory_bank_test_remove");
-    let base_dir = temp_dir.join("memory_bank");
+    let temp_dir = env::temp_dir().join("semantic_search_test_remove");
+    let base_dir = temp_dir.join("semantic_search");
     fs::create_dir_all(&base_dir).unwrap();
 
-    // Create a memory bank client
-    let mut client = MemoryBankClient::new(base_dir).unwrap();
+    // Create a semantic search client
+    let mut client = SemanticSearchClient::new(base_dir).unwrap();
 
     // Add contexts
     let id1 = client

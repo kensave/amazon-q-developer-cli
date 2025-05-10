@@ -4,8 +4,8 @@ use std::{
     fs,
 };
 
-use memory_bank_client::client::SemanticContext;
-use memory_bank_client::types::DataPoint;
+use semantic_search_client::client::SemanticContext;
+use semantic_search_client::types::DataPoint;
 use serde_json::Value;
 
 #[test]

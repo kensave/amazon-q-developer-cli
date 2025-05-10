@@ -545,7 +545,9 @@ mod tests {
         // This is a simplified test that checks error handling paths
 
         // Return a mock error to test error handling
-        Err(MemoryBankError::EmbeddingError("Test error".to_string()))
+        Err(crate::error::SemanticSearchError::EmbeddingError(
+            "Test error".to_string(),
+        ))
     }
 
     /// Helper function to check if real embedder tests should be skipped
