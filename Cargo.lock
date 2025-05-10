@@ -7614,11 +7614,11 @@ dependencies = [
  "glob",
  "indicatif",
  "mcp_client",
- "memory_bank_client",
  "once_cell",
  "rand 0.9.0",
  "regex",
  "rustyline",
+ "semantic_search_client",
  "semver",
  "serde",
  "serde_json",
@@ -8670,6 +8670,32 @@ dependencies = [
  "servo_arc",
  "smallvec",
  "thin-slice",
+]
+
+[[package]]
+name = "semantic_search_client"
+version = "1.10.0"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "candle-nn",
+ "candle-transformers",
+ "chrono",
+ "dirs",
+ "fastembed",
+ "hf-hub",
+ "hnsw_rs",
+ "indicatif",
+ "once_cell",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokenizers",
+ "tracing",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]

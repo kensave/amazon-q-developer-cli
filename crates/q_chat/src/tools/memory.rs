@@ -9,8 +9,8 @@ use crossterm::style::{
 };
 use eyre::Result;
 use fig_os_shim::Context;
-use memory_bank_client::MemoryBankClient;
 use once_cell::sync::Lazy;
+use semantic_search_client::SemanticSearchClient;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
@@ -287,15 +287,15 @@ impl Memory {
 
 // Simple in-memory store implementation
 pub struct MemoryStore {
-    memory_bank_client: MemoryBankClient,
+    semantic_search_client: SemanticSearchClient,
 }
 
 impl MemoryStore {
     pub(crate) fn new() -> Self {
-        let expanded_path = shellexpand::tilde("~/.aws/amazonq/memory_bank");
+        let expanded_path = shellexpand::tilde("~/.aws/amazonq/semantic_search");
         let global_path = PathBuf::from(expanded_path.as_ref());
         Self {
-            memory_bank_client: MemoryBankClient::new(global_path).unwrap(),
+            semantic_search_client: SemanticSearchClient::new(global_path).unwrap(),
         }
     }
 
@@ -303,11 +303,11 @@ impl MemoryStore {
     pub(crate) fn new_test_instance() -> Self {
         // Create a temporary directory for tests
         let temp_dir = std::env::temp_dir()
-            .join("memory_bank_test")
+            .join("semantic_search_test")
             .join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&temp_dir).unwrap();
         Self {
-            memory_bank_client: MemoryBankClient::new(temp_dir).unwrap(),
+            semantic_search_client: SemanticSearchClient::new(temp_dir).unwrap(),
         }
     }
 
@@ -345,75 +345,78 @@ impl MemoryStore {
             pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
             // Use a progress callback
-            let _ = self.memory_bank_client.add_context_from_path(
+            let _ = self.semantic_search_client.add_context_from_path(
                 path_clone,
                 key,
                 path_name,
                 true,
                 Some(move |status| match status {
-                    memory_bank_client::types::ProgressStatus::CountingFiles => {
+                    semantic_search_client::types::ProgressStatus::CountingFiles => {
                         pb.set_message("Counting files...");
                         pb.set_length(100);
                         pb.set_position(0);
                     },
-                    memory_bank_client::types::ProgressStatus::StartingIndexing(total) => {
+                    semantic_search_client::types::ProgressStatus::StartingIndexing(total) => {
                         pb.set_message("Indexing files...");
                         pb.set_length(total as u64);
                         pb.set_position(0);
                     },
-                    memory_bank_client::types::ProgressStatus::Indexing(current, total) => {
+                    semantic_search_client::types::ProgressStatus::Indexing(current, total) => {
                         pb.set_message(format!("Indexing file {} of {}", current, total));
                         pb.set_position(current as u64);
                     },
-                    memory_bank_client::types::ProgressStatus::Finalizing => {
+                    semantic_search_client::types::ProgressStatus::Finalizing => {
                         pb.set_message("Finalizing index...");
                         if let Some(len) = pb.length() {
                             pb.set_position(len - 1);
                         }
                     },
-                    memory_bank_client::types::ProgressStatus::Complete => {
+                    semantic_search_client::types::ProgressStatus::Complete => {
                         pb.finish_with_message("Indexing complete!");
                         pb.println("✅ Successfully indexed all files and created memory context");
                     },
-                    memory_bank_client::types::ProgressStatus::CreatingSemanticContext => {
+                    semantic_search_client::types::ProgressStatus::CreatingSemanticContext => {
                         pb.set_message("Creating semantic context...");
                     },
-                    memory_bank_client::types::ProgressStatus::GeneratingEmbeddings(current, total) => {
+                    semantic_search_client::types::ProgressStatus::GeneratingEmbeddings(current, total) => {
                         pb.set_message(format!("Generating embeddings {} of {}", current, total));
                         pb.set_position(current as u64);
                     },
-                    memory_bank_client::types::ProgressStatus::BuildingIndex => {
+                    semantic_search_client::types::ProgressStatus::BuildingIndex => {
                         pb.set_message("Building vector index...");
                     },
                 }),
             );
         } else {
             let preview: String = value.chars().take(40).collect();
-            let _ =
-                self.memory_bank_client
-                    .add_context_from_text(key, value, &format!("Text memory {}...", preview), true);
+            let _ = self.semantic_search_client.add_context_from_text(
+                key,
+                value,
+                &format!("Text memory {}...", preview),
+                true,
+            );
         }
     }
 
     pub fn remove_by_id(&mut self, id: &str) -> bool {
-        self.memory_bank_client.remove_context_by_id(id, true).is_ok()
+        self.semantic_search_client.remove_context_by_id(id, true).is_ok()
     }
 
     pub fn remove_by_name(&mut self, name: &str) -> bool {
-        self.memory_bank_client.remove_context_by_name(name, true).is_ok()
+        self.semantic_search_client.remove_context_by_name(name, true).is_ok()
     }
 
     pub fn remove_by_path(&mut self, path: &str) -> bool {
-        self.memory_bank_client.remove_context_by_path(path, true).is_ok()
+        self.semantic_search_client.remove_context_by_path(path, true).is_ok()
     }
 
     pub fn clear(&mut self) -> usize {
-        let contexts = self.memory_bank_client.get_contexts();
+        let contexts = self.semantic_search_client.get_contexts();
 
         let count = contexts.len();
 
         for context in contexts {
-            let _ = self.memory_bank_client.remove_context(&context.id, true);
+            let _ = self.semantic_search_client.remove_context(&context.id, true);
         }
 
         count
@@ -422,7 +425,7 @@ impl MemoryStore {
     pub fn search(&self, query: &str, context_id: Option<&str>) -> Vec<(String, String)> {
         match context_id {
             // If context_id is provided, search only in that specific context
-            Some(id) => match self.memory_bank_client.search_context(id, query, Some(5)) {
+            Some(id) => match self.semantic_search_client.search_context(id, query, Some(5)) {
                 Ok(search_results) => search_results
                     .into_iter()
                     .map(|result| {
@@ -433,7 +436,7 @@ impl MemoryStore {
                 Err(_) => Vec::new(),
             },
             // If no context_id is provided, search across all contexts
-            None => match self.memory_bank_client.search_all(query, Some(5)) {
+            None => match self.semantic_search_client.search_all(query, Some(5)) {
                 Ok(results) => results
                     .into_iter()
                     .flat_map(|(context_id, search_results)| {
@@ -448,7 +451,7 @@ impl MemoryStore {
         }
     }
 
-    pub fn get_all(&self) -> Vec<memory_bank_client::MemoryContext> {
-        self.memory_bank_client.get_contexts()
+    pub fn get_all(&self) -> Vec<semantic_search_client::MemoryContext> {
+        self.semantic_search_client.get_contexts()
     }
 }
