@@ -8,8 +8,12 @@ use semantic_search_client::SemanticSearchClient;
 use semantic_search_client::types::ProgressStatus;
 
 #[test]
-#[ignore] // Ignore this test as it requires downloading models
 fn test_add_context_from_path_with_directory() {
+    if env::var("MEMORY_BANK_USE_REAL_EMBEDDERS").is_err() {
+        println!("Skipping test: MEMORY_BANK_USE_REAL_EMBEDDERS not set");
+        assert!(true);
+        return;
+    }
     // Create a temporary directory for the test
     let temp_dir = env::temp_dir().join("semantic_search_test_dir");
     let base_dir = temp_dir.join("semantic_search");

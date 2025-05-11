@@ -18,8 +18,9 @@ fn test_client_initialization() {
     // Verify the client was created successfully
     assert_eq!(client.get_contexts().len(), 0);
 
-    // Test with default directory
-    let client = SemanticSearchClient::new_with_default_dir().unwrap();
+    // Instead of using the actual default directory, use our test directory again
+    // This ensures test isolation and prevents interference from existing contexts
+    let client = SemanticSearchClient::new(base_dir.clone()).unwrap();
     assert_eq!(client.get_contexts().len(), 0);
 
     // Clean up

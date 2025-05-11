@@ -31,7 +31,7 @@ impl Default for EmbeddingType {
 }
 
 /// Common trait for text embedders
-pub trait TextEmbedderTrait: Send {
+pub trait TextEmbedderTrait: Send + Sync {
     /// Generate an embedding for a text
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
 
