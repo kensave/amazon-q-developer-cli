@@ -1,9 +1,9 @@
-# Memory Bank Client
+# Semantic Search Client
 
-A powerful Rust library for managing semantic memory contexts with vector embeddings, enabling advanced semantic search capabilities across text and code.
+Rust library for managing semantic memory contexts with vector embeddings, enabling semantic search capabilities across text and code.
 
-[![Crate](https://img.shields.io/crates/v/memory_bank_client.svg)](https://crates.io/crates/memory_bank_client)
-[![Documentation](https://docs.rs/memory_bank_client/badge.svg)](https://docs.rs/memory_bank_client)
+[![Crate](https://img.shields.io/crates/v/semantic_search_client.svg)](https://crates.io/crates/semantic_search_client)
+[![Documentation](https://docs.rs/semantic_search_client/badge.svg)](https://docs.rs/semantic_search_client)
 
 ## Features
 
@@ -23,18 +23,18 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-memory_bank_client = "0.1.0"
+semantic_search_client = "0.1.0"
 ```
 
 ## Quick Start
 
 ```rust
-use memory_bank_client::{MemoryBankClient, Result};
+use semantic_search_client::{SemanticSearchClient, Result};
 use std::path::Path;
 
 fn main() -> Result<()> {
     // Create a new memory bank client with default settings
-    let mut client = MemoryBankClient::new_with_default_dir()?;
+    let mut client = SemanticSearchClient::new_with_default_dir()?;
     
     // Add a context from a directory
     let context_id = client.add_context_from_path(
@@ -107,14 +107,14 @@ Text is converted to vector embeddings using state-of-the-art embedding models:
 
 ```rust
 // With default directory (~/.memory_bank)
-let client = MemoryBankClient::new_with_default_dir()?;
+let client = SemanticSearchClient::new_with_default_dir()?;
 
 // With custom directory
-let client = MemoryBankClient::new("/path/to/storage")?;
+let client = SemanticSearchClient::new("/path/to/storage")?;
 
 // With specific embedding type
-use memory_bank_client::embedding::EmbeddingType;
-let client = MemoryBankClient::new_with_embedding_type(EmbeddingType::Candle)?;
+use semantic_search_client::embedding::EmbeddingType;
+let client = SemanticSearchClient::new_with_embedding_type(EmbeddingType::Candle)?;
 ```
 
 ### Adding Contexts
@@ -217,14 +217,14 @@ The library supports different embedding backends:
 
 ```rust
 // Use Candle (works on all platforms)
-let client = MemoryBankClient::with_embedding_type(
+let client = SemanticSearchClient::with_embedding_type(
     "/path/to/storage",
     EmbeddingType::Candle,
 )?;
 
 // Use ONNX (macOS and Windows only)
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-let client = MemoryBankClient::with_embedding_type(
+let client = SemanticSearchClient::with_embedding_type(
     "/path/to/storage",
     EmbeddingType::Onnx,
 )?;
@@ -244,7 +244,7 @@ rayon::ThreadPoolBuilder::new()
     .unwrap();
 
 // The client will use the configured thread pool
-let client = MemoryBankClient::new_with_default_dir()?;
+let client = SemanticSearchClient::new_with_default_dir()?;
 ```
 
 ## Performance Considerations
@@ -265,10 +265,10 @@ let client = MemoryBankClient::new_with_default_dir()?;
 The library uses a custom error type `MemoryBankError` that implements the standard `Error` trait:
 
 ```rust
-use memory_bank_client::{MemoryBankClient, MemoryBankError, Result};
+use semantic_search_client::{SemanticSearchClient, MemoryBankError, Result};
 
 fn process() -> Result<()> {
-    let client = MemoryBankClient::new_with_default_dir()?;
+    let client = SemanticSearchClient::new_with_default_dir()?;
     
     // Handle specific error types
     match client.search_context("invalid-id", "query", 5) {
