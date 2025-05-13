@@ -41,11 +41,11 @@ pub fn create_embedder(embedding_type: EmbeddingType) -> Result<Box<dyn TextEmbe
 ///
 /// A text embedder instance
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub fn create_embedder(embedding_type: EmbeddingType) -> Result<CandleTextEmbedder> {
-    let embedder = match embedding_type {
-        EmbeddingType::Candle => CandleTextEmbedder::new()?,
+pub fn create_embedder(embedding_type: EmbeddingType) -> Result<Box<dyn TextEmbedderTrait>> {
+    let embedder: Box<dyn TextEmbedderTrait> = match embedding_type {
+        EmbeddingType::Candle => Box::new(CandleTextEmbedder::new()?),
         #[cfg(test)]
-        EmbeddingType::Mock => MockTextEmbedder::new(384),
+        EmbeddingType::Mock => Box::new(MockTextEmbedder::new(384)),
     };
 
     Ok(embedder)

@@ -71,7 +71,7 @@ pub struct SemanticSearchClient {
     embedder: Box<dyn TextEmbedderTrait>,
     /// Text embedder for generating embeddings (Linux only)
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    embedder: CandleTextEmbedder,
+    embedder: Box<dyn TextEmbedderTrait>,
 }
 impl SemanticSearchClient {
     /// Create a new semantic search client
