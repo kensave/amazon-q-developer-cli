@@ -17,8 +17,6 @@ use crate::client::{
     utils,
 };
 use crate::config;
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-use crate::embedding::CandleTextEmbedder;
 use crate::embedding::{
     EmbeddingType,
     TextEmbedderTrait,
