@@ -16,6 +16,7 @@ use semantic_search_client::types::{
 };
 use serde::Deserialize;
 use tokio::sync::Mutex;
+use tracing::warn;
 
 use super::{
     InvokeOutput,
@@ -66,12 +67,31 @@ pub struct KnowledgeSearch {
 }
 
 impl Knowledge {
-    pub async fn validate(&mut self, _ctx: &Context) -> Result<()> {
+    pub async fn validate(&mut self, ctx: &Context) -> Result<()> {
         match self {
-            Knowledge::Add(_) => Ok(()),
+            Knowledge::Add(add) => {
+                // Check if value is intended to be a path (doesn't contain newlines)
+                if !add.value.contains('\n') {
+                    let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &add.value);
+                    if !path.exists() {
+                        eyre::bail!("Path '{}' does not exist", add.value);
+                    }
+                }
+                Ok(())
+            },
             Knowledge::Remove(remove) => {
                 if remove.name.is_empty() && remove.context_id.is_empty() && remove.path.is_empty() {
                     eyre::bail!("Please provide at least one of: name, context_id, or path");
+                }
+                // If path is provided, validate it exists
+                if !remove.path.is_empty() {
+                    let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &remove.path);
+                    if !path.exists() {
+                        warn!(
+                            "Path '{}' does not exist, will try to remove by path string match",
+                            remove.path
+                        );
+                    }
                 }
                 Ok(())
             },
@@ -86,7 +106,7 @@ impl Knowledge {
         }
     }
 
-    pub async fn queue_description(&self, _ctx: &Context, updates: &mut impl Write) -> Result<()> {
+    pub async fn queue_description(&self, ctx: &Context, updates: &mut impl Write) -> Result<()> {
         match self {
             Knowledge::Add(add) => {
                 queue!(
@@ -98,11 +118,12 @@ impl Knowledge {
                 )?;
 
                 // Check if value is a path or text content
-                let path = PathBuf::from(&add.value);
+                let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &add.value);
                 if path.exists() {
+                    let path_type = if path.is_dir() { "directory" } else { "file" };
                     queue!(
                         updates,
-                        style::Print(" (directory: "),
+                        style::Print(format!(" ({}: ", path_type)),
                         style::SetForegroundColor(Color::Green),
                         style::Print(&add.value),
                         style::ResetColor,
@@ -204,7 +225,7 @@ impl Knowledge {
         Ok(())
     }
 
-    pub async fn invoke(&self, _ctx: &Context, updates: &mut impl Write) -> Result<InvokeOutput> {
+    pub async fn invoke(&self, ctx: &Context, updates: &mut impl Write) -> Result<InvokeOutput> {
         // Get the knowledge store singleton
         let knowledge_store = KnowledgeStore::get_instance();
         let mut store = knowledge_store.lock().await;
@@ -212,7 +233,7 @@ impl Knowledge {
         let result = match self {
             Knowledge::Add(add) => {
                 // For path indexing, we'll show a progress message first
-                let path = PathBuf::from(&add.value);
+                let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &add.value);
                 if path.exists() {
                     if path.is_dir() {
                         writeln!(updates, "Indexing directory: {}...", add.value)?;
@@ -232,19 +253,20 @@ impl Knowledge {
                     // Remove by ID
                     match store.remove_by_id(&remove.context_id) {
                         Ok(_) => format!("Removed context with ID '{}' from knowledge base", remove.context_id),
-                        Err(e) => format!("Failed to remove context: {}", e),
+                        Err(e) => format!("Failed to remove context by ID: {}", e),
                     }
                 } else if !remove.name.is_empty() {
                     // Remove by name
                     match store.remove_by_name(&remove.name) {
                         Ok(_) => format!("Removed context with name '{}' from knowledge base", remove.name),
-                        Err(e) => format!("Failed to remove context: {}", e),
+                        Err(e) => format!("Failed to remove context by name: {}", e),
                     }
                 } else if !remove.path.is_empty() {
                     // Remove by path
-                    match store.remove_by_path(&remove.path) {
+                    let sanitized_path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &remove.path);
+                    match store.remove_by_path(&sanitized_path.to_string_lossy()) {
                         Ok(_) => format!("Removed context with path '{}' from knowledge base", remove.path),
-                        Err(e) => format!("Failed to remove context: {}", e),
+                        Err(e) => format!("Failed to remove context by path: {}", e),
                     }
                 } else {
                     "Error: No identifier provided for removal. Please specify name, context_id, or path.".to_string()

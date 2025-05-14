@@ -1364,8 +1364,29 @@ impl ChatContext {
                         let knowledge_store = tools::knowledge::KnowledgeStore::get_instance();
                         let mut store = knowledge_store.lock().await;
 
+                        // Sanitize the path before using it
+                        let sanitized_path = if !path.contains('\n') {
+                            let ctx_path = crate::cli::chat::tools::sanitize_path_tool_arg(&self.ctx, &path);
+                            if !ctx_path.exists() {
+                                queue!(
+                                    self.output,
+                                    style::SetForegroundColor(Color::Red),
+                                    style::Print(format!("\nError: Path '{}' does not exist\n\n", path)),
+                                    style::SetForegroundColor(Color::Reset)
+                                )?;
+                                return Ok(ChatState::PromptUser {
+                                    tool_uses: Some(tool_uses),
+                                    pending_tool_index,
+                                    skip_printing_tools: true,
+                                });
+                            }
+                            ctx_path.to_string_lossy().to_string()
+                        } else {
+                            path.clone()
+                        };
+
                         // Use the path as both name and value for simplicity
-                        store.add(&path, &path).unwrap_or_else(|e| {
+                        store.add(&path, &sanitized_path).unwrap_or_else(|e| {
                             queue!(
                                 self.output,
                                 style::SetForegroundColor(Color::Red),
@@ -1394,8 +1415,11 @@ impl ChatContext {
                         let knowledge_store = tools::knowledge::KnowledgeStore::get_instance();
                         let mut store = knowledge_store.lock().await;
 
+                        // Sanitize the path before using it
+                        let sanitized_path = crate::cli::chat::tools::sanitize_path_tool_arg(&self.ctx, &path);
+
                         // Try to remove by path first
-                        if store.remove_by_path(&path).is_ok() {
+                        if store.remove_by_path(&sanitized_path.to_string_lossy()).is_ok() {
                             queue!(
                                 self.output,
                                 style::SetForegroundColor(Color::Green),
