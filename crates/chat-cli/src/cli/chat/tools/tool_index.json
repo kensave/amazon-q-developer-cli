@@ -198,7 +198,7 @@
         "properties": {
           "command": {
             "type": "string",
-            "enum": ["show", "add", "remove", "clear", "search"],
+            "enum": ["show", "add", "remove", "clear", "search", "update"],
             "description": "The knowledge operation to perform"
           },
           "name": {

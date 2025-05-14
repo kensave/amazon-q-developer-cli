@@ -1489,6 +1489,55 @@ impl ChatContext {
                             skip_printing_tools: true,
                         }
                     },
+                    KnowledgeSubcommand::Update { path } => {
+                        // Implementation for updating knowledge entries
+                        let knowledge_store = tools::knowledge::KnowledgeStore::get_instance();
+                        let mut store = knowledge_store.lock().await;
+
+                        // Sanitize the path before using it
+                        let sanitized_path = if !path.contains('\n') {
+                            let ctx_path = crate::cli::chat::tools::sanitize_path_tool_arg(&self.ctx, &path);
+                            if !ctx_path.exists() {
+                                queue!(
+                                    self.output,
+                                    style::SetForegroundColor(Color::Red),
+                                    style::Print(format!("\nError: Path '{}' does not exist\n\n", path)),
+                                    style::SetForegroundColor(Color::Reset)
+                                )?;
+                                return Ok(ChatState::PromptUser {
+                                    tool_uses: Some(tool_uses),
+                                    pending_tool_index,
+                                    skip_printing_tools: true,
+                                });
+                            }
+                            ctx_path.to_string_lossy().to_string()
+                        } else {
+                            path.clone()
+                        };
+
+                        // Try to update by path directly
+                        if let Err(e) = store.update_by_path(&sanitized_path) {
+                            queue!(
+                                self.output,
+                                style::SetForegroundColor(Color::Red),
+                                style::Print(format!("\nError updating knowledge base: {}\n\n", e)),
+                                style::SetForegroundColor(Color::Reset)
+                            )?;
+                        } else {
+                            queue!(
+                                self.output,
+                                style::SetForegroundColor(Color::Green),
+                                style::Print(format!("\nUpdated in knowledge base: {}\n\n", path)),
+                                style::SetForegroundColor(Color::Reset)
+                            )?;
+                        }
+
+                        ChatState::PromptUser {
+                            tool_uses: Some(tool_uses),
+                            pending_tool_index,
+                            skip_printing_tools: true,
+                        }
+                    },
                 }
             },
             Command::Ask { prompt } => {

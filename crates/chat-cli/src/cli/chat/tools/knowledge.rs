@@ -35,6 +35,8 @@ pub enum Knowledge {
     Clear(KnowledgeClear),
     #[serde(rename = "search")]
     Search(KnowledgeSearch),
+    #[serde(rename = "update")]
+    Update(KnowledgeUpdate),
     #[serde(rename = "show")]
     Show,
 }
@@ -66,6 +68,16 @@ pub struct KnowledgeSearch {
     pub context_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct KnowledgeUpdate {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub context_id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
 impl Knowledge {
     pub async fn validate(&mut self, ctx: &Context) -> Result<()> {
         match self {
@@ -93,6 +105,22 @@ impl Knowledge {
                         );
                     }
                 }
+                Ok(())
+            },
+            Knowledge::Update(update) => {
+                // Require at least one identifier (context_id or name)
+                if update.context_id.is_empty() && update.name.is_empty() && update.path.is_empty() {
+                    eyre::bail!("Please provide either context_id or name or path to identify the context to update");
+                }
+
+                // Validate the path exists
+                if !update.path.is_empty() {
+                    let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &update.path);
+                    if !path.exists() {
+                        eyre::bail!("Path '{}' does not exist", update.path);
+                    }
+                }
+
                 Ok(())
             },
             Knowledge::Clear(clear) => {
@@ -127,7 +155,7 @@ impl Knowledge {
                         style::SetForegroundColor(Color::Green),
                         style::Print(&add.value),
                         style::ResetColor,
-                        style::Print(")")
+                        style::Print(")\n")
                     )?;
                 } else {
                     let preview: String = add.value.chars().take(20).collect();
@@ -138,7 +166,7 @@ impl Knowledge {
                             style::SetForegroundColor(Color::Blue),
                             style::Print(format!("{}...", preview)),
                             style::ResetColor,
-                            style::Print(")")
+                            style::Print(")\n")
                         )?;
                     } else {
                         queue!(
@@ -147,7 +175,7 @@ impl Knowledge {
                             style::SetForegroundColor(Color::Blue),
                             style::Print(&add.value),
                             style::ResetColor,
-                            style::Print(")")
+                            style::Print(")\n")
                         )?;
                     }
                 }
@@ -187,6 +215,37 @@ impl Knowledge {
                     )?;
                 }
             },
+            Knowledge::Update(update) => {
+                queue!(updates, style::Print("Updating knowledge base context"),)?;
+
+                if !update.context_id.is_empty() {
+                    queue!(
+                        updates,
+                        style::Print(" with ID: "),
+                        style::SetForegroundColor(Color::Green),
+                        style::Print(&update.context_id),
+                        style::ResetColor,
+                    )?;
+                } else if !update.name.is_empty() {
+                    queue!(
+                        updates,
+                        style::Print(" with name: "),
+                        style::SetForegroundColor(Color::Green),
+                        style::Print(&update.name),
+                        style::ResetColor,
+                    )?;
+                }
+
+                let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &update.path);
+                let path_type = if path.is_dir() { "directory" } else { "file" };
+                queue!(
+                    updates,
+                    style::Print(format!(" using new {}: ", path_type)),
+                    style::SetForegroundColor(Color::Green),
+                    style::Print(&update.path),
+                    style::ResetColor,
+                )?;
+            },
             Knowledge::Clear(_) => {
                 queue!(
                     updates,
@@ -225,7 +284,7 @@ impl Knowledge {
         Ok(())
     }
 
-    pub async fn invoke(&self, ctx: &Context, updates: &mut impl Write) -> Result<InvokeOutput> {
+    pub async fn invoke(&self, ctx: &Context, _updates: &mut impl Write) -> Result<InvokeOutput> {
         // Get the knowledge store singleton
         let knowledge_store = KnowledgeStore::get_instance();
         let mut store = knowledge_store.lock().await;
@@ -234,16 +293,14 @@ impl Knowledge {
             Knowledge::Add(add) => {
                 // For path indexing, we'll show a progress message first
                 let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &add.value);
-                if path.exists() {
-                    if path.is_dir() {
-                        writeln!(updates, "Indexing directory: {}...", add.value)?;
-                    } else {
-                        writeln!(updates, "Indexing file: {}...", add.value)?;
-                    }
-                    writeln!(updates, "This may take a moment depending on the size.")?;
-                }
+                let value_to_use = if path.exists() {
+                    path.to_string_lossy().to_string()
+                } else {
+                    // If it's not a valid path, use the original value (might be text content)
+                    add.value.clone()
+                };
 
-                match store.add(&add.name, &add.value) {
+                match store.add(&add.name, &value_to_use) {
                     Ok(context_id) => format!("Added '{}' to knowledge base with ID: {}", add.name, context_id),
                     Err(e) => format!("Failed to add to knowledge base: {}", e),
                 }
@@ -270,6 +327,53 @@ impl Knowledge {
                     }
                 } else {
                     "Error: No identifier provided for removal. Please specify name, context_id, or path.".to_string()
+                }
+            },
+            Knowledge::Update(update) => {
+                // Validate that we have a path and at least one identifier
+                if update.path.is_empty() {
+                    return Ok(InvokeOutput {
+                        output: OutputKind::Text(
+                            "Error: No path provided for update. Please specify a path to update with.".to_string(),
+                        ),
+                    });
+                }
+
+                // Sanitize the path
+                let path = crate::cli::chat::tools::sanitize_path_tool_arg(ctx, &update.path);
+                if !path.exists() {
+                    return Ok(InvokeOutput {
+                        output: OutputKind::Text(format!("Error: Path '{}' does not exist", update.path)),
+                    });
+                }
+
+                let sanitized_path = path.to_string_lossy().to_string();
+
+                // Choose the appropriate update method based on provided identifiers
+                if !update.context_id.is_empty() {
+                    // Update by ID
+                    match store.update_context_by_id(&update.context_id, &sanitized_path) {
+                        Ok(_) => format!(
+                            "Updated context with ID '{}' using path '{}'",
+                            update.context_id, update.path
+                        ),
+                        Err(e) => format!("Failed to update context by ID: {}", e),
+                    }
+                } else if !update.name.is_empty() {
+                    // Update by name
+                    match store.update_context_by_name(&update.name, &sanitized_path) {
+                        Ok(_) => format!(
+                            "Updated context with name '{}' using path '{}'",
+                            update.name, update.path
+                        ),
+                        Err(e) => format!("Failed to update context by name: {}", e),
+                    }
+                } else {
+                    // Update by path (if no ID or name provided)
+                    match store.update_by_path(&sanitized_path) {
+                        Ok(_) => format!("Updated context with path '{}'", update.path),
+                        Err(e) => format!("Failed to update context by path: {}", e),
+                    }
                 }
             },
             Knowledge::Clear(_) => match store.clear() {
@@ -447,6 +551,104 @@ impl KnowledgeStore {
         }
     }
 
+    pub fn update_context_by_id(&mut self, context_id: &str, path_str: &str) -> Result<(), String> {
+        // First, check if the context exists
+        let contexts = self.client.get_contexts();
+        let context = contexts.iter().find(|c| c.id == context_id);
+
+        if context.is_none() {
+            return Err(format!("Context with ID '{}' not found", context_id));
+        }
+
+        let context = context.unwrap();
+        let path = PathBuf::from(path_str);
+
+        if !path.exists() {
+            return Err(format!("Path '{}' does not exist", path_str));
+        }
+
+        // Create a progress bar
+        let pb = indicatif::ProgressBar::new(100);
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {msg} {pos}/{len} ({eta})")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+
+        // Enable steady tick to ensure the progress bar updates regularly
+        pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
+        // Use a progress callback
+        let progress_callback = move |status: semantic_search_client::types::ProgressStatus| {
+            match status {
+                semantic_search_client::types::ProgressStatus::CountingFiles => {
+                    pb.set_message("Counting files...");
+                    pb.set_length(100);
+                    pb.set_position(0);
+                },
+                semantic_search_client::types::ProgressStatus::StartingIndexing(total) => {
+                    pb.set_message("Indexing files...");
+                    pb.set_length(total as u64);
+                    pb.set_position(0);
+                },
+                semantic_search_client::types::ProgressStatus::Indexing(current, total) => {
+                    pb.set_message(format!("Indexing file {} of {}", current, total));
+                    pb.set_position(current as u64);
+                },
+                semantic_search_client::types::ProgressStatus::Finalizing => {
+                    pb.set_message("Finalizing index...");
+                    if let Some(len) = pb.length() {
+                        pb.set_position(len - 1);
+                    }
+                },
+                semantic_search_client::types::ProgressStatus::Complete => {
+                    pb.finish_with_message("Update complete!");
+                    pb.println("✅ Successfully updated knowledge context");
+                },
+                semantic_search_client::types::ProgressStatus::CreatingSemanticContext => {
+                    pb.set_message("Creating semantic context...");
+                },
+                semantic_search_client::types::ProgressStatus::GeneratingEmbeddings(current, total) => {
+                    pb.set_message(format!("Generating embeddings {} of {}", current, total));
+                    pb.set_position(current as u64);
+                },
+                semantic_search_client::types::ProgressStatus::BuildingIndex => {
+                    pb.set_message("Building vector index...");
+                },
+            };
+        };
+
+        // First remove the existing context
+        if let Err(e) = self.client.remove_context_by_id(context_id, true) {
+            return Err(format!("Failed to remove existing context: {}", e));
+        }
+
+        // Then add a new context with the same ID but new content
+        // Since we can't directly control the ID generation in add_context_from_path,
+        // we'll need to add the context and then update its metadata
+        let result =
+            self.client
+                .add_context_from_path(path, &context.name, &context.description, true, Some(progress_callback));
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Failed to update context: {}", e)),
+        }
+    }
+
+    pub fn update_context_by_name(&mut self, name: &str, path_str: &str) -> Result<(), String> {
+        // Find the context ID by name
+        let contexts = self.client.get_contexts();
+        let context = contexts.iter().find(|c| c.name == name);
+
+        if let Some(context) = context {
+            self.update_context_by_id(&context.id, path_str)
+        } else {
+            Err(format!("Context with name '{}' not found", name))
+        }
+    }
+
     pub fn remove_by_id(&mut self, id: &str) -> Result<(), String> {
         self.client.remove_context_by_id(id, true).map_err(|e| e.to_string())
     }
@@ -461,6 +663,26 @@ impl KnowledgeStore {
         self.client
             .remove_context_by_path(path, true)
             .map_err(|e| e.to_string())
+    }
+
+    pub fn update_by_path(&mut self, path_str: &str) -> Result<(), String> {
+        // Find contexts that might match this path
+        let contexts = self.client.get_contexts();
+        let matching_context = contexts.iter().find(|c| {
+            if let Some(source_path) = &c.source_path {
+                source_path == path_str
+            } else {
+                false
+            }
+        });
+
+        if let Some(context) = matching_context {
+            // Found a matching context, update it
+            self.update_context_by_id(&context.id, path_str)
+        } else {
+            // No matching context found
+            Err(format!("No context found with path '{}'", path_str))
+        }
     }
 
     pub fn clear(&mut self) -> Result<usize, String> {

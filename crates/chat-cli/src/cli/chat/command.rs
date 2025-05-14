@@ -189,6 +189,7 @@ pub enum KnowledgeSubcommand {
     Show,
     Add { path: String },
     Remove { path: String },
+    Update { path: String },
     Clear,
     Help,
 }
@@ -495,6 +496,34 @@ impl Command {
 
                             Self::Knowledge {
                                 subcommand: KnowledgeSubcommand::Add { path },
+                            }
+                        },
+                        "update" => {
+                            // Parse update command with path
+                            let mut path = None;
+
+                            let args = match shlex::split(&parts[2..].join(" ")) {
+                                Some(args) => args,
+                                None => return Err("Failed to parse quoted arguments".to_string()),
+                            };
+
+                            for arg in &args {
+                                if path.is_none() {
+                                    path = Some(arg.to_string());
+                                } else {
+                                    return Err(format!("Only a single path is allowed. Found extra path: {}", arg));
+                                }
+                            }
+
+                            let path = path.ok_or_else(|| {
+                                format!(
+                                    "Invalid /knowledge arguments.\n\nUsage:\n  {}",
+                                    KnowledgeSubcommand::UPDATE_USAGE
+                                )
+                            })?;
+
+                            Self::Knowledge {
+                                subcommand: KnowledgeSubcommand::Update { path },
                             }
                         },
                         "rm" => {
@@ -1228,6 +1257,7 @@ impl KnowledgeSubcommand {
   <em>help</em>                           <black!>Show an explanation for the knowledge command</black!>
   <em>show</em>                           <black!>Display the knowledge base contents</black!>
   <em>add <<path>></em>                   <black!>Add a file or directory to knowledge base</black!>
+  <em>update <<path>></em>                <black!>Update a file or directory in knowledge base</black!>
   <em>rm <<path>></em>                    <black!>Remove specified knowledge context by path</black!>
   <em>clear</em>                          <black!>Remove all knowledge contexts</black!>"};
     const BASE_COMMAND: &str = color_print::cstr! {"<cyan!>Usage: /knowledge [SUBCOMMAND]</cyan!>
@@ -1236,6 +1266,7 @@ impl KnowledgeSubcommand {
   Manage knowledge base for semantic search and retrieval.
   Knowledge base is used to store and search information across chat sessions."};
     const REMOVE_USAGE: &str = "/knowledge rm <path>";
+    const UPDATE_USAGE: &str = "/knowledge update <path>";
 
     fn usage_msg(header: impl AsRef<str>) -> String {
         format!(
