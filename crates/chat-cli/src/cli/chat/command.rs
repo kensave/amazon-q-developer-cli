@@ -1280,7 +1280,7 @@ impl KnowledgeSubcommand {
     pub fn help_text() -> String {
         color_print::cformat!(
             r#"
-<magenta,em>Knowledge Base Management</magenta,em>
+<magenta,em>(Beta) Knowledge Base Management</magenta,em>
 
 Knowledge base allows you to store and search information across chat sessions.
 Files and directories added to the knowledge base are indexed for semantic search,

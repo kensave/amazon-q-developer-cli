@@ -207,7 +207,7 @@ const SMALL_SCREEN_WECLOME_TEXT: &str = color_print::cstr! {"
 <em>Welcome to <cyan!>Amazon Q</cyan!>!</em>
 "};
 
-const ROTATING_TIPS: [&str; 9] = [
+const ROTATING_TIPS: [&str; 10] = [
     color_print::cstr! {"You can use <green!>/editor</green!> to edit your prompt with a vim-like experience"},
     color_print::cstr! {"<green!>/usage</green!> shows you a visual breakdown of your current context window usage"},
     color_print::cstr! {"Get notified whenever Q CLI finishes responding. Just run <green!>q settings chat.enableNotifications true</green!>"},
@@ -217,6 +217,7 @@ const ROTATING_TIPS: [&str; 9] = [
     color_print::cstr! {"You can use <green!>/compact</green!> to replace the conversation history with its summary to free up the context space"},
     color_print::cstr! {"If you want to file an issue to the Q CLI team, just tell me, or run <green!>q issue</green!>"},
     color_print::cstr! {"You can enable custom tools with <green!>MCP servers</green!>. Learn more with <green!>/help</green!>"},
+    color_print::cstr! {"Store and search information across chat sessions with <green!>/knowledge add</green!> and just ask Q CLI about it."},
 ];
 
 const GREETING_BREAK_POINT: usize = 67;
