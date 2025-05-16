@@ -3,7 +3,10 @@ mod trait_def;
 #[cfg(test)]
 mod benchmark_test;
 mod benchmark_utils;
+mod bm25;
+#[cfg(not(target_arch = "aarch64"))]
 mod candle;
+#[cfg(not(target_arch = "aarch64"))]
 mod candle_models;
 /// Mock embedder for testing
 #[cfg(test)]
@@ -19,7 +22,10 @@ pub use benchmark_utils::{
     create_standard_test_data,
     run_standard_benchmark,
 };
+pub use bm25::BM25TextEmbedder;
+#[cfg(not(target_arch = "aarch64"))]
 pub use candle::CandleTextEmbedder;
+#[cfg(not(target_arch = "aarch64"))]
 pub use candle_models::ModelType;
 #[cfg(test)]
 pub use mock::MockTextEmbedder;

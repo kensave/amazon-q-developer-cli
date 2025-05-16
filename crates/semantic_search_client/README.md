@@ -16,6 +16,7 @@ Rust library for managing semantic memory contexts with vector embeddings, enabl
 - **Progress Tracking**: Detailed progress reporting for long-running operations
 - **Parallel Processing**: Efficiently process large directories with parallel execution
 - **Memory Efficient**: Stream large files and directories without excessive memory usage
+- **Cross-Platform Compatibility**: Fallback mechanisms for all platforms and architectures
 
 ## Installation
 
@@ -74,6 +75,9 @@ cargo test
 
 To run tests with real embedders (which will download models), set the `MEMORY_BANK_USE_REAL_EMBEDDERS` environment variable:
 
+```bash
+MEMORY_BANK_USE_REAL_EMBEDDERS=1 cargo test
+```
 
 ## Core Concepts
 
@@ -96,10 +100,25 @@ Each context contains data points, which are individual pieces of text with asso
 
 ### Embeddings
 
-Text is converted to vector embeddings using state-of-the-art embedding models:
+Text is converted to vector embeddings using different backends based on platform and architecture:
 
-- **macOS/Windows**: Uses both ONNX Runtime with FastEmbed and Candle
-- **Linux**: Uses Candle for embeddings
+- **macOS/Windows**: Uses ONNX Runtime with FastEmbed by default
+- **Linux (non-ARM)**: Uses Candle for embeddings
+- **Linux (ARM64)**: Uses BM25 keyword-based embeddings as a fallback
+
+## Embedding Backends
+
+The library supports multiple embedding backends with automatic selection based on platform compatibility:
+
+1. **ONNX**: Fastest option, available on macOS and Windows
+2. **Candle**: Good performance, used on Linux (non-ARM)
+3. **BM25**: Fallback option based on keyword matching, used on Linux ARM64
+
+The default selection logic prioritizes performance where possible:
+- macOS/Windows: ONNX is the default
+- Linux (non-ARM): Candle is the default
+- Linux ARM64: BM25 is the default
+- ARM64: BM25 is the default
 
 ## Detailed Usage
 
@@ -216,17 +235,25 @@ client.remove_context_by_path("/path/to/indexed/directory", true)?;
 The library supports different embedding backends:
 
 ```rust
-// Use Candle (works on all platforms)
+// Use ONNX (fastest, used on macOS and Windows)
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+let client = SemanticSearchClient::with_embedding_type(
+    "/path/to/storage",
+    EmbeddingType::Onnx,
+)?;
+
+// Use Candle (used on Linux non-ARM)
+#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
 let client = SemanticSearchClient::with_embedding_type(
     "/path/to/storage",
     EmbeddingType::Candle,
 )?;
 
-// Use ONNX (macOS and Windows only)
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+// Use BM25 (used on Linux ARM64)
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 let client = SemanticSearchClient::with_embedding_type(
     "/path/to/storage",
-    EmbeddingType::Onnx,
+    EmbeddingType::BM25,
 )?;
 ```
 
@@ -253,12 +280,14 @@ let client = SemanticSearchClient::new_with_default_dir()?;
 - **Disk Space**: Persistent contexts store both the original text and vector embeddings
 - **Embedding Speed**: The first embedding operation may be slower as models are loaded
 - **Hardware Acceleration**: On macOS, Metal is used for faster embedding generation
+- **Platform Differences**: Performance may vary based on the selected embedding backend
 
 ## Platform-Specific Features
 
-- **macOS**: Uses Metal for hardware-accelerated embeddings via Candle and ONNX Runtime
+- **macOS**: Uses Metal for hardware-accelerated embeddings via ONNX Runtime and Candle
 - **Windows**: Uses optimized CPU execution via ONNX Runtime and Candle
-- **Linux**: Uses Candle for embeddings with CPU optimization
+- **Linux (non-ARM)**: Uses Candle for embeddings
+- **Linux ARM64**: Uses BM25 keyword-based embeddings as a fallback
 
 ## Error Handling
 

@@ -28,21 +28,27 @@ tokio.workspace = true
 # Vector search library
 hnsw_rs = "0.3.1"
 
-# Candle dependencies for text embeddings (used on all platforms)
+# BM25 implementation - works on all platforms including ARM
+bm25 = { version = "2.2.1", features = ["language_detection"] }
+
+# Common dependencies for all platforms
+anyhow = "1.0"
+
+# Candle dependencies - not used on arm64
+[target.'cfg(not(target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "0.9.1", features = [] }
 candle-nn = "0.9.1"
 candle-transformers = "0.9.1"
 tokenizers = "0.21.1"
 hf-hub = { version = "0.4.2", default-features = false, features = ["rustls-tls", "tokio", "ureq"] }
-anyhow = "1.0"
 
 # Conditionally enable Metal on macOS
-[target.'cfg(target_os = "macos")'.dependencies.candle-core]
+[target.'cfg(all(target_os = "macos", not(target_arch = "aarch64")))'.dependencies.candle-core]
 version = "0.9.1"
 features = []
 
 # Conditionally enable CUDA on Linux and Windows
-[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies.candle-core]
+[target.'cfg(all(any(target_os = "linux", target_os = "windows"), not(target_arch = "aarch64")))'.dependencies.candle-core]
 version = "0.9.1"
 features = []
 

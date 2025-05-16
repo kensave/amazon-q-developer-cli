@@ -108,11 +108,6 @@ impl SemanticSearchClient {
             // Continue with default config if initialization fails
         }
 
-        // Create the embedder using the factory
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
-        let embedder = embedder_factory::create_embedder(embedding_type)?;
-
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let embedder = embedder_factory::create_embedder(embedding_type)?;
 
         // Load metadata for persistent contexts
