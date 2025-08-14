@@ -40,6 +40,9 @@ pub enum KnowledgeSubcommand {
         /// Index type to use (Fast, Best)
         #[arg(long)]
         index_type: Option<String>,
+        /// Add to global knowledge base (shared across all agents)
+        #[arg(long)]
+        global: bool,
     },
     /// Remove specified knowledge base entry by path
     #[command(alias = "rm")]
@@ -116,7 +119,8 @@ impl KnowledgeSubcommand {
                 include,
                 exclude,
                 index_type,
-            } => Self::handle_add(os, path, include, exclude, index_type).await,
+                global,
+            } => Self::handle_add(os, session, path, include, exclude, index_type, *global).await,
             KnowledgeSubcommand::Remove { path } => Self::handle_remove(os, path).await,
             KnowledgeSubcommand::Update { path } => Self::handle_update(os, path).await,
             KnowledgeSubcommand::Clear => Self::handle_clear(os, session).await,
@@ -254,6 +258,7 @@ impl KnowledgeSubcommand {
 
     async fn handle_add(
         os: &Os,
+        session: &mut ChatSession,
         path: &str,
         include_patterns: &[String],
         exclude_patterns: &[String],
@@ -261,10 +266,18 @@ impl KnowledgeSubcommand {
     ) -> OperationResult {
         match Self::validate_and_sanitize_path(os, path) {
             Ok(sanitized_path) => {
-                let async_knowledge_store = match KnowledgeStore::get_async_instance_with_os(os).await {
-                    Ok(store) => store,
-                    Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
-                };
+                // Get agent name from session context
+                let agent_name = session
+                    .conversation
+                    .context_manager
+                    .as_ref()
+                    .map(|cm| cm.current_profile.as_str());
+
+                let async_knowledge_store =
+                    match KnowledgeStore::get_async_instance_with_agent(os, agent_name, is_global).await {
+                        Ok(store) => store,
+                        Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
+                    };
                 let mut store = async_knowledge_store.lock().await;
 
                 let include = if include_patterns.is_empty() {

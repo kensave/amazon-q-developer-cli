@@ -110,6 +110,27 @@ pub struct KnowledgeStore {
 }
 
 impl KnowledgeStore {
+    /// Get singleton instance with agent-aware directory selection
+    pub async fn get_async_instance_with_agent(
+        os: &Os,
+        agent_name: Option<&str>,
+        is_global: bool,
+    ) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
+        let knowledge_dir = if is_global {
+            let global_dir = crate::util::directories::global_knowledge_dir(os)?;
+            // Only migrate when accessing global context - existing knowledge becomes global
+            Self::migrate_legacy_knowledge_base(&global_dir).await;
+            global_dir
+        } else if let Some(agent) = agent_name {
+            crate::util::directories::agent_knowledge_dir(os, agent)?
+        } else {
+            // Fallback to original behavior
+            crate::util::directories::knowledge_bases_dir(os)?
+        };
+
+        Ok(Self::get_async_instance_with_os_settings(os, knowledge_dir).await)
+    }
+
     /// Get singleton instance with directory from OS (includes migration)
     pub async fn get_async_instance_with_os(os: &Os) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
         let knowledge_dir = crate::util::directories::knowledge_bases_dir(os)?;
@@ -553,5 +574,19 @@ mod tests {
 
         // Verify directory structure
         assert!(base_dir.to_string_lossy().contains("knowledge_bases"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_knowledge_dir_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let os = create_test_os(&temp_dir).await;
+
+        let agent_dir = crate::util::directories::agent_knowledge_dir(&os, "test-agent").unwrap();
+        let global_dir = crate::util::directories::global_knowledge_dir(&os).unwrap();
+
+        // Verify paths are different
+        assert_ne!(agent_dir, global_dir);
+        assert!(agent_dir.to_string_lossy().contains("test-agent"));
+        assert!(global_dir.to_string_lossy().contains("global_knowledge"));
     }
 }
