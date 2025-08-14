@@ -1,0 +1,229 @@
+   Compiling chat_cli v1.13.3 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli)
+error[E0599]: no method named `get_all_contexts` found for struct `AsyncSemanticSearchClient` in the current scope
+   --> crates/chat-cli/src/util/knowledge_store.rs:155:32
+    |
+155 |             self.global_client.get_all_contexts().await.map_err(|e| e.to_string())?
+    |                                ^^^^^^^^^^^^^^^^
+    |
+help: there is a method `get_contexts` with a similar name
+    |
+155 -             self.global_client.get_all_contexts().await.map_err(|e| e.to_string())?
+155 +             self.global_client.get_contexts().await.map_err(|e| e.to_string())?
+    |
+
+error[E0599]: no method named `get_all_contexts` found for reference `&AsyncSemanticSearchClient` in the current scope
+   --> crates/chat-cli/src/util/knowledge_store.rs:157:26
+    |
+157 |             agent_client.get_all_contexts().await.map_err(|e| e.to_string())?
+    |                          ^^^^^^^^^^^^^^^^
+    |
+help: there is a method `get_contexts` with a similar name
+    |
+157 -             agent_client.get_all_contexts().await.map_err(|e| e.to_string())?
+157 +             agent_client.get_contexts().await.map_err(|e| e.to_string())?
+    |
+
+error[E0499]: cannot borrow `*self` as mutable more than once at a time
+   --> crates/chat-cli/src/util/knowledge_store.rs:182:9
+    |
+175 |             &mut self.global_client
+    |             ----------------------- first mutable borrow occurs here
+...
+182 |         self.add_to_client(client, name, path_str, options).await
+    |         ^^^^               ------ first borrow later used here
+    |         |
+    |         second mutable borrow occurs here
+
+error[E0560]: struct `KnowledgeStore` has no field named `client`
+   --> crates/chat-cli/src/util/knowledge_store.rs:359:19
+    |
+359 |         Ok(Self { client })
+    |                   ^^^^^^ `KnowledgeStore` does not have this field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:412:20
+    |
+412 |         match self.client.add_context(request).await {
+    |                    ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:444:17
+    |
+444 |         Ok(self.client.get_contexts().await)
+    |                 ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:450:14
+    |
+450 |             .client
+    |              ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `distance` on type `&_`
+   --> crates/chat-cli/src/util/knowledge_store.rs:460:36
+    |
+460 |         flattened.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+    |                                    ^^^^^^^^ unknown field
+
+error[E0609]: no field `client` on type `&KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:467:14
+    |
+467 |         self.client
+    |              ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:477:38
+    |
+477 |             let available_ops = self.client.list_operation_ids().await;
+    |                                      ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:484:22
+    |
+484 |                 self.client.cancel_operation(uuid).await.map_err(|e| e.to_string())
+    |                      ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:487:47
+    |
+487 |                 if let Some(full_uuid) = self.client.find_operation_by_short_id(short_id).await {
+    |                                               ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:488:26
+    |
+488 |                     self.client.cancel_operation(full_uuid).await.map_err(|e| e.to_string())
+    |                          ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:499:18
+    |
+499 |             self.client
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:508:20
+    |
+508 |         match self.client.clear_all().await {
+    |                    ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:519:20
+    |
+519 |         match self.client.clear_all_immediate().await {
+    |                    ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:527:37
+    |
+527 |         if let Some(context) = self.client.get_context_by_path(path).await {
+    |                                     ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:528:18
+    |
+528 |             self.client
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:539:37
+    |
+539 |         if let Some(context) = self.client.get_context_by_name(name).await {
+    |                                     ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:540:18
+    |
+540 |             self.client
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:551:14
+    |
+551 |         self.client
+    |              ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:559:37
+    |
+559 |         if let Some(context) = self.client.get_context_by_path(path_str).await {
+    |                                     ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:561:18
+    |
+561 |             self.client
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:576:40
+    |
+576 |             let available_paths = self.client.list_context_paths().await;
+    |                                        ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:600:14
+    |
+600 |         self.client
+    |              ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:617:37
+    |
+617 |         if let Some(context) = self.client.get_context_by_name(name).await {
+    |                                     ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+error[E0609]: no field `client` on type `&mut KnowledgeStore`
+   --> crates/chat-cli/src/util/knowledge_store.rs:619:18
+    |
+619 |             self.client
+    |                  ^^^^^^ unknown field
+    |
+    = note: available fields are: `agent_client`, `global_client`, `agent_name`
+
+Some errors have detailed explanations: E0499, E0560, E0599, E0609.
+For more information about an error, try `rustc --explain E0499`.
+error: could not compile `chat_cli` (lib) due to 27 previous errors

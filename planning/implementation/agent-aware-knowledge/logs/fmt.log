@@ -1,0 +1,176 @@
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/cli/chat/cli/knowledge.rs:268:
+         match Self::validate_and_sanitize_path(os, path) {
+             Ok(sanitized_path) => {
+                 // Get agent name from session context
+[31m-                let agent_name = session.conversation.context_manager
+(B[m[32m+                let agent_name = session
+(B[m[32m+                    .conversation
+(B[m[32m+                    .context_manager
+(B[m                     .as_ref()
+                     .map(|cm| cm.current_profile.as_str());
+ 
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/cli/chat/cli/knowledge.rs:275:
+[31m-                let async_knowledge_store = match KnowledgeStore::get_async_instance_with_agent(os, agent_name, is_global).await {
+(B[m[31m-                    Ok(store) => store,
+(B[m[31m-                    Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
+(B[m[31m-                };
+(B[m[32m+                let async_knowledge_store =
+(B[m[32m+                    match KnowledgeStore::get_async_instance_with_agent(os, agent_name, is_global).await {
+(B[m[32m+                        Ok(store) => store,
+(B[m[32m+                        Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
+(B[m[32m+                    };
+(B[m                 let mut store = async_knowledge_store.lock().await;
+ 
+                 let include = if include_patterns.is_empty() {
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:321:
+     async fn test_agent_knowledge_dir() {
+         let temp_dir = tempfile::TempDir::new().unwrap();
+         let os = create_test_os(&temp_dir).await;
+[31m-        
+(B[m[32m+
+(B[m         let agent_dir = agent_knowledge_dir(&os, "test-agent").unwrap();
+         // The path will be transformed by chroot_path, so we need to get the actual home dir first
+         let home = home_dir(&os).unwrap();
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:328:
+[31m-        let expected = home.join(".aws").join("amazonq").join("knowledge_bases").join("test-agent");
+(B[m[31m-        
+(B[m[32m+        let expected = home
+(B[m[32m+            .join(".aws")
+(B[m[32m+            .join("amazonq")
+(B[m[32m+            .join("knowledge_bases")
+(B[m[32m+            .join("test-agent");
+(B[m[32m+
+(B[m         assert_eq!(agent_dir, expected);
+     }
+ 
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:334:
+     async fn test_global_knowledge_dir() {
+         let temp_dir = tempfile::TempDir::new().unwrap();
+         let os = create_test_os(&temp_dir).await;
+[31m-        
+(B[m[32m+
+(B[m         let global_dir = global_knowledge_dir(&os).unwrap();
+         // The path will be transformed by chroot_path, so we need to get the actual home dir first
+         let home = home_dir(&os).unwrap();
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:341:
+[31m-        let expected = home.join(".aws").join("amazonq").join("knowledge_bases").join("global_knowledge");
+(B[m[31m-        
+(B[m[32m+        let expected = home
+(B[m[32m+            .join(".aws")
+(B[m[32m+            .join("amazonq")
+(B[m[32m+            .join("knowledge_bases")
+(B[m[32m+            .join("global_knowledge");
+(B[m[32m+
+(B[m         assert_eq!(global_dir, expected);
+     }
+ 
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/knowledge_store.rs:111:
+ 
+ impl KnowledgeStore {
+     /// Get singleton instance with agent-aware directory selection
+[31m-    pub async fn get_async_instance_with_agent(os: &Os, agent_name: Option<&str>, is_global: bool) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
+(B[m[32m+    pub async fn get_async_instance_with_agent(
+(B[m[32m+        os: &Os,
+(B[m[32m+        agent_name: Option<&str>,
+(B[m[32m+        is_global: bool,
+(B[m[32m+    ) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
+(B[m         let knowledge_dir = if is_global {
+             let global_dir = crate::util::directories::global_knowledge_dir(os)?;
+             // Only migrate when accessing global context - existing knowledge becomes global
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/knowledge_store.rs:123:
+             // Fallback to original behavior
+             crate::util::directories::knowledge_bases_dir(os)?
+         };
+[31m-        
+(B[m[32m+
+(B[m         Ok(Self::get_async_instance_with_os_settings(os, knowledge_dir).await)
+     }
+ 
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/cli/chat/cli/knowledge.rs:268:
+         match Self::validate_and_sanitize_path(os, path) {
+             Ok(sanitized_path) => {
+                 // Get agent name from session context
+[31m-                let agent_name = session.conversation.context_manager
+(B[m[32m+                let agent_name = session
+(B[m[32m+                    .conversation
+(B[m[32m+                    .context_manager
+(B[m                     .as_ref()
+                     .map(|cm| cm.current_profile.as_str());
+ 
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/cli/chat/cli/knowledge.rs:275:
+[31m-                let async_knowledge_store = match KnowledgeStore::get_async_instance_with_agent(os, agent_name, is_global).await {
+(B[m[31m-                    Ok(store) => store,
+(B[m[31m-                    Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
+(B[m[31m-                };
+(B[m[32m+                let async_knowledge_store =
+(B[m[32m+                    match KnowledgeStore::get_async_instance_with_agent(os, agent_name, is_global).await {
+(B[m[32m+                        Ok(store) => store,
+(B[m[32m+                        Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
+(B[m[32m+                    };
+(B[m                 let mut store = async_knowledge_store.lock().await;
+ 
+                 let include = if include_patterns.is_empty() {
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:321:
+     async fn test_agent_knowledge_dir() {
+         let temp_dir = tempfile::TempDir::new().unwrap();
+         let os = create_test_os(&temp_dir).await;
+[31m-        
+(B[m[32m+
+(B[m         let agent_dir = agent_knowledge_dir(&os, "test-agent").unwrap();
+         // The path will be transformed by chroot_path, so we need to get the actual home dir first
+         let home = home_dir(&os).unwrap();
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:328:
+[31m-        let expected = home.join(".aws").join("amazonq").join("knowledge_bases").join("test-agent");
+(B[m[31m-        
+(B[m[32m+        let expected = home
+(B[m[32m+            .join(".aws")
+(B[m[32m+            .join("amazonq")
+(B[m[32m+            .join("knowledge_bases")
+(B[m[32m+            .join("test-agent");
+(B[m[32m+
+(B[m         assert_eq!(agent_dir, expected);
+     }
+ 
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:334:
+     async fn test_global_knowledge_dir() {
+         let temp_dir = tempfile::TempDir::new().unwrap();
+         let os = create_test_os(&temp_dir).await;
+[31m-        
+(B[m[32m+
+(B[m         let global_dir = global_knowledge_dir(&os).unwrap();
+         // The path will be transformed by chroot_path, so we need to get the actual home dir first
+         let home = home_dir(&os).unwrap();
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/directories.rs:341:
+[31m-        let expected = home.join(".aws").join("amazonq").join("knowledge_bases").join("global_knowledge");
+(B[m[31m-        
+(B[m[32m+        let expected = home
+(B[m[32m+            .join(".aws")
+(B[m[32m+            .join("amazonq")
+(B[m[32m+            .join("knowledge_bases")
+(B[m[32m+            .join("global_knowledge");
+(B[m[32m+
+(B[m         assert_eq!(global_dir, expected);
+     }
+ 
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/knowledge_store.rs:111:
+ 
+ impl KnowledgeStore {
+     /// Get singleton instance with agent-aware directory selection
+[31m-    pub async fn get_async_instance_with_agent(os: &Os, agent_name: Option<&str>, is_global: bool) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
+(B[m[32m+    pub async fn get_async_instance_with_agent(
+(B[m[32m+        os: &Os,
+(B[m[32m+        agent_name: Option<&str>,
+(B[m[32m+        is_global: bool,
+(B[m[32m+    ) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
+(B[m         let knowledge_dir = if is_global {
+             let global_dir = crate::util::directories::global_knowledge_dir(os)?;
+             // Only migrate when accessing global context - existing knowledge becomes global
+Diff in /Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli/src/util/knowledge_store.rs:123:
+             // Fallback to original behavior
+             crate::util::directories::knowledge_bases_dir(os)?
+         };
+[31m-        
+(B[m[32m+
+(B[m         Ok(Self::get_async_instance_with_os_settings(os, knowledge_dir).await)
+     }
+ 
