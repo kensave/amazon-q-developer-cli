@@ -311,11 +311,17 @@ impl Knowledge {
         Ok(())
     }
 
-    pub async fn invoke(&self, os: &Os, _updates: &mut impl Write) -> Result<InvokeOutput> {
-        // Get the async knowledge store singleton with OS-aware directory
-        let async_knowledge_store = KnowledgeStore::get_async_instance_with_os(os)
-            .await
-            .map_err(|e| eyre::eyre!("Failed to access knowledge base: {}", e))?;
+    pub async fn invoke(&self, os: &Os, _updates: &mut impl Write, agent: Option<&crate::cli::agent::Agent>) -> Result<InvokeOutput> {
+        // Get agent name from the agent parameter
+        let agent_name = agent.map(|a| a.name.as_str());
+        
+        // Use agent-aware knowledge store
+        let async_knowledge_store = if let Some(agent_name) = agent_name {
+            KnowledgeStore::get_async_instance_with_agent(os, Some(agent_name), false).await
+        } else {
+            KnowledgeStore::get_async_instance_with_os(os).await
+        }
+        .map_err(|e| eyre::eyre!("Failed to access knowledge base: {}", e))?;
         let mut store = async_knowledge_store.lock().await;
 
         let result = match self {
@@ -337,10 +343,19 @@ impl Knowledge {
                     )
                     .await
                 {
-                    Ok(context_id) => format!(
-                        "Added '{}' to knowledge base with ID: {}. Track active jobs in '/knowledge status' with provided id.",
-                        add.name, context_id
-                    ),
+                    Ok(context_id) => {
+                        if agent_name.is_some() {
+                            format!(
+                                "Added '{}' to agent knowledge base with ID: {}. Track active jobs in '/knowledge status' with provided id.",
+                                add.name, context_id
+                            )
+                        } else {
+                            format!(
+                                "Added '{}' to global knowledge base with ID: {}. Track active jobs in '/knowledge status' with provided id.",
+                                add.name, context_id
+                            )
+                        }
+                    },
                     Err(e) => format!("Failed to add to knowledge base: {}", e),
                 }
             },

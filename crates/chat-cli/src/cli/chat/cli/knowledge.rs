@@ -8,7 +8,6 @@ use crossterm::style::{
 };
 use eyre::Result;
 use semantic_search_client::{
-    KnowledgeContext,
     OperationStatus,
     SystemStatus,
 };
@@ -46,11 +45,20 @@ pub enum KnowledgeSubcommand {
     },
     /// Remove specified knowledge base entry by path
     #[command(alias = "rm")]
-    Remove { path: String },
+    Remove { 
+        path: String,
+        /// Remove from global knowledge base instead of agent-specific
+        #[arg(long)]
+        global: bool,
+    },
     /// Update a file or directory in knowledge base
     Update { path: String },
     /// Remove all knowledge base entries
-    Clear,
+    Clear {
+        /// Clear global knowledge instead of agent-specific knowledge
+        #[arg(long)]
+        global: bool,
+    },
     /// Show background operation status
     Status,
     /// Cancel a background operation
@@ -121,9 +129,9 @@ impl KnowledgeSubcommand {
                 index_type,
                 global,
             } => Self::handle_add(os, session, path, include, exclude, index_type, *global).await,
-            KnowledgeSubcommand::Remove { path } => Self::handle_remove(os, path).await,
+            KnowledgeSubcommand::Remove { path, global } => Self::handle_remove(os, path, *global).await,
             KnowledgeSubcommand::Update { path } => Self::handle_update(os, path).await,
-            KnowledgeSubcommand::Clear => Self::handle_clear(os, session).await,
+            KnowledgeSubcommand::Clear { global } => Self::handle_clear(os, session, *global).await,
             KnowledgeSubcommand::Status => Self::handle_status(os).await,
             KnowledgeSubcommand::Cancel { operation_id } => Self::handle_cancel(os, operation_id.as_deref()).await,
         }
@@ -150,7 +158,7 @@ impl KnowledgeSubcommand {
             match KnowledgeStore::get_async_instance_with_agent(os, Some(agent), false).await {
                 Ok(store) => {
                     let store = store.lock().await;
-                    let entries = store.get_all().await.unwrap_or_default();
+                    let entries = store.get_all_for_scope(false).await.unwrap_or_default();
                     if entries.is_empty() {
                         queue!(
                             session.stderr,
@@ -185,7 +193,7 @@ impl KnowledgeSubcommand {
         match KnowledgeStore::get_async_instance_with_agent(os, agent_name.as_deref(), true).await {
             Ok(store) => {
                 let store = store.lock().await;
-                let entries = store.get_all().await.unwrap_or_default();
+                let entries = store.get_all_for_scope(true).await.unwrap_or_default();
                 if entries.is_empty() {
                     queue!(
                         session.stderr,
@@ -212,112 +220,57 @@ impl KnowledgeSubcommand {
 
     fn format_knowledge_entries_with_indent(
         session: &mut ChatSession,
-        knowledge_entries: &[KnowledgeContext],
+        knowledge_entries: &[crate::util::knowledge_store::KnowledgeEntry],
         indent: &str,
     ) -> Result<(), std::io::Error> {
         for entry in knowledge_entries {
-            let path_display = entry.source_path.as_deref().unwrap_or("unknown");
+            let ctx = &entry.context;
+            
+            // Main entry line with name and ID
             queue!(
                 session.stderr,
-                style::Print(format!("{}📁 {} ", indent, entry.name)),
-                style::SetForegroundColor(Color::DarkGrey),
-                style::Print(format!("({})\n", path_display)),
+                style::Print(format!("{}📂 ", indent)),
+                style::SetAttribute(style::Attribute::Bold),
+                style::SetForegroundColor(Color::Grey),
+                style::Print(&ctx.name),
+                style::SetForegroundColor(Color::Green),
+                style::Print(format!(" ({})", &ctx.id[..8])),
+                style::SetAttribute(style::Attribute::Reset),
+                style::SetForegroundColor(Color::Reset),
+                style::Print("\n")
+            )?;
+
+            // Description line with original description
+            queue!(
+                session.stderr,
+                style::Print(format!("{}   ", indent)),
+                style::SetForegroundColor(Color::Grey),
+                style::Print(format!("{}\n", ctx.description)),
                 style::SetForegroundColor(Color::Reset)
             )?;
-        }
-        queue!(session.stderr, style::Print("\n"))?;
-        Ok(())
-    }
 
-    fn format_knowledge_entries(
-        session: &mut ChatSession,
-        knowledge_entries: &[KnowledgeContext],
-    ) -> Result<(), std::io::Error> {
-        if knowledge_entries.is_empty() {
+            // Stats line with improved colors
             queue!(
                 session.stderr,
-                style::Print("\nNo knowledge base entries found.\n"),
-                style::Print("💡 Tip: If indexing is in progress, entries may not appear until indexing completes.\n"),
-                style::Print("   Use 'knowledge status' to check active operations.\n\n")
-            )?;
-        } else {
-            queue!(
-                session.stderr,
-                style::Print("\n📚 Knowledge Base Entries:\n"),
-                style::Print(format!("{}\n", "━".repeat(80)))
-            )?;
-
-            for entry in knowledge_entries {
-                Self::format_single_entry(session, &entry)?;
-                queue!(session.stderr, style::Print(format!("{}\n", "━".repeat(80))))?;
-            }
-            // Add final newline to match original formatting exactly
-            queue!(session.stderr, style::Print("\n"))?;
-        }
-        Ok(())
-    }
-
-    fn format_single_entry(session: &mut ChatSession, entry: &&KnowledgeContext) -> Result<(), std::io::Error> {
-        queue!(
-            session.stderr,
-            style::SetAttribute(style::Attribute::Bold),
-            style::SetForegroundColor(Color::Cyan),
-            style::Print(format!("📂 {}: ", entry.id)),
-            style::SetForegroundColor(Color::Green),
-            style::Print(&entry.name),
-            style::SetAttribute(style::Attribute::Reset),
-            style::Print("\n")
-        )?;
-
-        queue!(
-            session.stderr,
-            style::Print(format!("   Description: {}\n", entry.description)),
-            style::Print(format!(
-                "   Created: {}\n",
-                entry.created_at.format("%Y-%m-%d %H:%M:%S")
-            )),
-            style::Print(format!(
-                "   Updated: {}\n",
-                entry.updated_at.format("%Y-%m-%d %H:%M:%S")
-            ))
-        )?;
-
-        if let Some(path) = &entry.source_path {
-            queue!(session.stderr, style::Print(format!("   Source: {}\n", path)))?;
-        }
-
-        queue!(
-            session.stderr,
-            style::Print("   Items: "),
-            style::SetForegroundColor(Color::Yellow),
-            style::Print(entry.item_count.to_string()),
-            style::SetForegroundColor(Color::Reset),
-            style::Print(" | Index Type: "),
-            style::SetForegroundColor(Color::Magenta),
-            style::Print(entry.embedding_type.description().to_string()),
-            style::SetForegroundColor(Color::Reset),
-            style::Print(" | Persistent: ")
-        )?;
-
-        if entry.persistent {
-            queue!(
-                session.stderr,
+                style::Print(format!("{}   ", indent)),
                 style::SetForegroundColor(Color::Green),
-                style::Print("Yes"),
+                style::Print(format!("{} items", ctx.item_count)),
+                style::SetForegroundColor(Color::DarkGrey),
+                style::Print(" • "),
+                style::SetForegroundColor(Color::Blue),
+                style::Print(ctx.embedding_type.description()),
+                style::SetForegroundColor(Color::DarkGrey),
+                style::Print(" • "),
+                style::SetForegroundColor(Color::DarkGrey),
+                style::Print(format!("{}", ctx.updated_at.format("%m/%d %H:%M"))),
                 style::SetForegroundColor(Color::Reset),
-                style::Print("\n")
-            )?;
-        } else {
-            queue!(
-                session.stderr,
-                style::SetForegroundColor(Color::Yellow),
-                style::Print("No"),
-                style::SetForegroundColor(Color::Reset),
-                style::Print("\n")
+                style::Print("\n\n")
             )?;
         }
         Ok(())
     }
+
+
 
     /// Handle add operation
     fn get_db_patterns(os: &crate::os::Os, setting: crate::database::settings::Setting) -> Vec<String> {
@@ -377,7 +330,7 @@ impl KnowledgeSubcommand {
                     .with_exclude_patterns(exclude)
                     .with_embedding_type(embedding_type_resolved);
 
-                match store.add(path, &sanitized_path.clone(), options).await {
+                match store.add_with_scope(path, &sanitized_path.clone(), options, is_global).await {
                     Ok(message) => OperationResult::Info(message),
                     Err(e) => {
                         if e.contains("Invalid include pattern") || e.contains("Invalid exclude pattern") {
@@ -393,7 +346,7 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle remove operation
-    async fn handle_remove(os: &Os, path: &str) -> OperationResult {
+    async fn handle_remove(os: &Os, path: &str, global: bool) -> OperationResult {
         let sanitized_path = sanitize_path_tool_arg(os, path);
 
         let async_knowledge_store = match KnowledgeStore::get_async_instance_with_os(os).await {
@@ -402,13 +355,15 @@ impl KnowledgeSubcommand {
         };
         let mut store = async_knowledge_store.lock().await;
 
-        // Try path first, then name
-        if store.remove_by_path(&sanitized_path.to_string_lossy()).await.is_ok() {
-            OperationResult::Success(format!("Removed knowledge base entry with path '{}'", path))
-        } else if store.remove_by_name(path).await.is_ok() {
-            OperationResult::Success(format!("Removed knowledge base entry with name '{}'", path))
+        let scope_desc = if global { "global" } else { "agent" };
+
+        // Try path first, then name using scope-aware methods
+        if store.remove_by_path_scope(&sanitized_path.to_string_lossy(), global).await.is_ok() {
+            OperationResult::Success(format!("Removed {} knowledge base entry with path '{}'", scope_desc, path))
+        } else if store.remove_by_name_scope(path, global).await.is_ok() {
+            OperationResult::Success(format!("Removed {} knowledge base entry with name '{}'", scope_desc, path))
         } else {
-            OperationResult::Warning(format!("Entry not found in knowledge base: {}", path))
+            OperationResult::Warning(format!("Entry not found in {} knowledge base: {}", scope_desc, path))
         }
     }
 
@@ -434,7 +389,7 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle clear operation
-    async fn handle_clear(os: &Os, session: &mut ChatSession) -> OperationResult {
+    async fn handle_clear(os: &Os, session: &mut ChatSession, is_global: bool) -> OperationResult {
         // Require confirmation
         queue!(
             session.stderr,
@@ -480,7 +435,7 @@ impl KnowledgeSubcommand {
             style::Print("🗑️  Clearing all knowledge base entries...\n")
         )
         .unwrap();
-        match store.clear_immediate().await {
+        match store.clear_scope(is_global).await {
             Ok(message) => OperationResult::Success(message),
             Err(e) => OperationResult::Error(format!("Failed to clear: {}", e)),
         }
@@ -670,7 +625,7 @@ impl KnowledgeSubcommand {
             KnowledgeSubcommand::Add { .. } => "add",
             KnowledgeSubcommand::Remove { .. } => "remove",
             KnowledgeSubcommand::Update { .. } => "update",
-            KnowledgeSubcommand::Clear => "clear",
+            KnowledgeSubcommand::Clear { .. } => "clear",
             KnowledgeSubcommand::Status => "status",
             KnowledgeSubcommand::Cancel { .. } => "cancel",
         }
