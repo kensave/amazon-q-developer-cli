@@ -130,29 +130,102 @@ impl KnowledgeSubcommand {
     }
 
     async fn handle_show(os: &Os, session: &mut ChatSession) -> Result<(), std::io::Error> {
-        match KnowledgeStore::get_async_instance_with_os(os).await {
+        // Get agent name from session context
+        let agent_name = session
+            .conversation
+            .context_manager
+            .as_ref()
+            .map(|cm| cm.current_profile.clone());
+
+        // Show agent-specific knowledge
+        if let Some(ref agent) = agent_name {
+            queue!(
+                session.stderr,
+                style::SetAttribute(crossterm::style::Attribute::Bold),
+                style::SetForegroundColor(Color::Magenta),
+                style::Print(format!("👤 Agent ({}):\n", agent)),
+                style::SetAttribute(crossterm::style::Attribute::Reset),
+            )?;
+
+            match KnowledgeStore::get_async_instance_with_agent(os, Some(agent), false).await {
+                Ok(store) => {
+                    let store = store.lock().await;
+                    let entries = store.get_all().await.unwrap_or_default();
+                    if entries.is_empty() {
+                        queue!(
+                            session.stderr,
+                            style::SetForegroundColor(Color::DarkGrey),
+                            style::Print("    <none>\n\n"),
+                            style::SetForegroundColor(Color::Reset)
+                        )?;
+                    } else {
+                        Self::format_knowledge_entries_with_indent(session, &entries, "    ")?;
+                    }
+                },
+                Err(_) => {
+                    queue!(
+                        session.stderr,
+                        style::SetForegroundColor(Color::DarkGrey),
+                        style::Print("    <none>\n\n"),
+                        style::SetForegroundColor(Color::Reset)
+                    )?;
+                },
+            }
+        }
+
+        // Show global knowledge
+        queue!(
+            session.stderr,
+            style::SetAttribute(crossterm::style::Attribute::Bold),
+            style::SetForegroundColor(Color::Magenta),
+            style::Print("🌍 Global:\n"),
+            style::SetAttribute(crossterm::style::Attribute::Reset),
+        )?;
+
+        match KnowledgeStore::get_async_instance_with_agent(os, agent_name.as_deref(), true).await {
             Ok(store) => {
                 let store = store.lock().await;
-                let entries = store.get_all().await.unwrap_or_else(|e| {
-                    let _ = queue!(
+                let entries = store.get_all().await.unwrap_or_default();
+                if entries.is_empty() {
+                    queue!(
                         session.stderr,
-                        style::SetForegroundColor(Color::Red),
-                        style::Print(&format!("Error getting knowledge base entries: {}\n", e)),
-                        style::ResetColor
-                    );
-                    Vec::new()
-                });
-                let _ = Self::format_knowledge_entries(session, &entries);
+                        style::SetForegroundColor(Color::DarkGrey),
+                        style::Print("    <none>\n\n"),
+                        style::SetForegroundColor(Color::Reset)
+                    )?;
+                } else {
+                    Self::format_knowledge_entries_with_indent(session, &entries, "    ")?;
+                }
             },
-            Err(e) => {
+            Err(_) => {
                 queue!(
                     session.stderr,
-                    style::SetForegroundColor(Color::Red),
-                    style::Print(&format!("Error accessing knowledge base: {}\n", e)),
+                    style::SetForegroundColor(Color::DarkGrey),
+                    style::Print("    <none>\n\n"),
                     style::SetForegroundColor(Color::Reset)
                 )?;
             },
         }
+
+        Ok(())
+    }
+
+    fn format_knowledge_entries_with_indent(
+        session: &mut ChatSession,
+        knowledge_entries: &[KnowledgeContext],
+        indent: &str,
+    ) -> Result<(), std::io::Error> {
+        for entry in knowledge_entries {
+            let path_display = entry.source_path.as_deref().unwrap_or("unknown");
+            queue!(
+                session.stderr,
+                style::Print(format!("{}📁 {} ", indent, entry.name)),
+                style::SetForegroundColor(Color::DarkGrey),
+                style::Print(format!("({})\n", path_display)),
+                style::SetForegroundColor(Color::Reset)
+            )?;
+        }
+        queue!(session.stderr, style::Print("\n"))?;
         Ok(())
     }
 
