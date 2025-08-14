@@ -1,0 +1,8 @@
+   Compiling chat_cli v1.13.3 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli)
+    Checking semantic_search_client v1.13.3 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/semantic-search-client)
+    Checking amzn-toolkit-telemetry-client v1.0.0 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-toolkit-telemetry-client)
+    Checking amzn-qdeveloper-streaming-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-qdeveloper-streaming-client)
+    Checking amzn-codewhisperer-streaming-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-codewhisperer-streaming-client)
+    Checking amzn-codewhisperer-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-codewhisperer-client)
+    Checking amzn-consolas-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-consolas-client)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 32.80s

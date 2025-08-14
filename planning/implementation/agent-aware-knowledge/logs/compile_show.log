@@ -1,0 +1,24 @@
+   Compiling chat_cli v1.13.3 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli)
+error[E0502]: cannot borrow `*session` as mutable because it is also borrowed as immutable
+   --> crates/chat-cli/src/cli/chat/cli/knowledge.rs:160:25
+    |
+134 |         let agent_name = session.conversation.context_manager
+    |                          ------------------------------------ immutable borrow occurs here
+...
+160 |                         Self::format_knowledge_entries_with_indent(session, &entries, "    ")?;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+...
+183 |         match KnowledgeStore::get_async_instance_with_agent(os, agent_name, true).await {
+    |                                                                 ---------- immutable borrow later used here
+
+error[E0609]: no field `path` on type `&KnowledgeContext`
+   --> crates/chat-cli/src/cli/chat/cli/knowledge.rs:221:54
+    |
+221 |                 style::Print(format!("({})\n", entry.path.display())),
+    |                                                      ^^^^ unknown field
+    |
+    = note: available fields are: `id`, `name`, `description`, `created_at`, `updated_at` ... and 6 others
+
+Some errors have detailed explanations: E0502, E0609.
+For more information about an error, try `rustc --explain E0502`.
+error: could not compile `chat_cli` (lib) due to 2 previous errors

@@ -1,0 +1,63 @@
+   Compiling chat_cli v1.13.3 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli)
+error[E0499]: cannot borrow `*self` as mutable more than once at a time
+   --> crates/chat-cli/src/util/knowledge_store.rs:150:13
+    |
+150 |             self.add_to_client(self.global_client.as_mut().unwrap(), name, path_str, options).await
+    |             ^^^^^-------------^------------------^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |             |    |             |
+    |             |    |             first mutable borrow occurs here
+    |             |    first borrow later used by call
+    |             second mutable borrow occurs here
+
+error[E0499]: cannot borrow `self.global_client` as mutable more than once at a time
+   --> crates/chat-cli/src/util/knowledge_store.rs:150:32
+    |
+150 |             self.add_to_client(self.global_client.as_mut().unwrap(), name, path_str, options).await
+    |             ---- ------------- ^^^^^^^^^^^^^^^^^^ second mutable borrow occurs here
+    |             |    |
+    |             |    first borrow later used by call
+    |             first mutable borrow occurs here
+    |
+help: try adding a local storing this argument...
+   --> crates/chat-cli/src/util/knowledge_store.rs:150:32
+    |
+150 |             self.add_to_client(self.global_client.as_mut().unwrap(), name, path_str, options).await
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: ...and then using that local as the argument to this call
+   --> crates/chat-cli/src/util/knowledge_store.rs:150:13
+    |
+150 |             self.add_to_client(self.global_client.as_mut().unwrap(), name, path_str, options).await
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0499]: cannot borrow `*self` as mutable more than once at a time
+   --> crates/chat-cli/src/util/knowledge_store.rs:156:13
+    |
+156 |             self.add_to_client(self.agent_client.as_mut().unwrap(), name, path_str, options).await
+    |             ^^^^^-------------^-----------------^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |             |    |             |
+    |             |    |             first mutable borrow occurs here
+    |             |    first borrow later used by call
+    |             second mutable borrow occurs here
+
+error[E0499]: cannot borrow `self.agent_client` as mutable more than once at a time
+   --> crates/chat-cli/src/util/knowledge_store.rs:156:32
+    |
+156 |             self.add_to_client(self.agent_client.as_mut().unwrap(), name, path_str, options).await
+    |             ---- ------------- ^^^^^^^^^^^^^^^^^ second mutable borrow occurs here
+    |             |    |
+    |             |    first borrow later used by call
+    |             first mutable borrow occurs here
+    |
+help: try adding a local storing this argument...
+   --> crates/chat-cli/src/util/knowledge_store.rs:156:32
+    |
+156 |             self.add_to_client(self.agent_client.as_mut().unwrap(), name, path_str, options).await
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: ...and then using that local as the argument to this call
+   --> crates/chat-cli/src/util/knowledge_store.rs:156:13
+    |
+156 |             self.add_to_client(self.agent_client.as_mut().unwrap(), name, path_str, options).await
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0499`.
+error: could not compile `chat_cli` (lib) due to 4 previous errors
