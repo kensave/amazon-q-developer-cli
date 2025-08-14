@@ -240,7 +240,7 @@ impl KnowledgeSubcommand {
         path: &str,
         include_patterns: &[String],
         exclude_patterns: &[String],
-        index_type: &Option<String>,
+        index_type: &Option<String>
     ) -> OperationResult {
         match Self::validate_and_sanitize_path(os, path) {
             Ok(sanitized_path) => {
