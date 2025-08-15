@@ -13,7 +13,6 @@ use semantic_search_client::types::{
     SearchResult,
 };
 use tokio::sync::Mutex;
-use tracing::debug;
 use uuid::Uuid;
 
 use crate::os::Os;
@@ -117,94 +116,133 @@ pub struct KnowledgeStore {
 }
 
 impl KnowledgeStore {
-    /// Get singleton instance with agent-aware directory selection
-    pub async fn get_async_instance_with_agent(
-        os: &Os,
-        agent_name: Option<&str>,
-        is_global: bool,
-    ) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
-        let knowledge_dir = if is_global {
-            let global_dir = crate::util::directories::global_knowledge_dir(os)?;
-            // Only migrate when accessing global context - existing knowledge becomes global
-            Self::migrate_legacy_knowledge_base(&global_dir).await;
-            global_dir
-        } else if let Some(agent) = agent_name {
-            crate::util::directories::agent_knowledge_dir(os, agent)?
-        } else {
-            // Fallback to original behavior
-            crate::util::directories::knowledge_bases_dir(os)?
-        };
-
-        Ok(Self::get_async_instance_with_os_settings(os, knowledge_dir).await)
-    }
-
-    /// Get singleton instance with directory from OS (includes migration)
-    pub async fn get_async_instance_with_os(os: &Os) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
-        let knowledge_dir = crate::util::directories::knowledge_bases_dir(os)?;
-        Self::migrate_legacy_knowledge_base(&knowledge_dir).await;
-        Ok(Self::get_async_instance_with_os_settings(os, knowledge_dir).await)
-    }
-
-    /// Migrate legacy knowledge base from old location if needed
-    async fn migrate_legacy_knowledge_base(knowledge_dir: &PathBuf) {
-        let old_flat_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".semantic_search");
-
-        if old_flat_dir.exists() && !knowledge_dir.exists() {
-            // Create parent directories first
-            if let Some(parent) = knowledge_dir.parent() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    debug!(
-                        "Warning: Failed to create parent directories for knowledge base migration: {}",
-                        e
-                    );
-                    return;
-                }
-            }
-
-            // Attempt migration
-            if let Err(e) = std::fs::rename(&old_flat_dir, knowledge_dir) {
-                debug!(
-                    "Warning: Failed to migrate legacy knowledge base from {} to {}: {}",
-                    old_flat_dir.display(),
-                    knowledge_dir.display(),
-                    e
-                );
-            } else {
-                println!(
-                    "✅ Migrated knowledge base from {} to {}",
-                    old_flat_dir.display(),
-                    knowledge_dir.display()
-                );
-            }
-        }
-    }
-
-    /// Get singleton instance with OS settings (primary method)
-    pub async fn get_async_instance_with_os_settings(os: &crate::os::Os, base_dir: PathBuf) -> Arc<Mutex<Self>> {
+    /// Get singleton instance with optional agent name
+    pub async fn get_async_instance(os: &Os, agent_name: Option<&str>) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
         static ASYNC_INSTANCE: Lazy<tokio::sync::OnceCell<Arc<Mutex<KnowledgeStore>>>> =
             Lazy::new(tokio::sync::OnceCell::new);
 
         if cfg!(test) {
-            Arc::new(Mutex::new(
-                KnowledgeStore::new_with_os_settings(os, base_dir)
-                    .await
-                    .expect("Failed to create test async knowledge store"),
-            ))
+            // For tests, create a new instance each time
+            let store = Self::new_with_os_settings(os, agent_name).await
+                .map_err(|_| directories::DirectoryError::Io(std::io::Error::new(std::io::ErrorKind::Other, "Failed to create store")))?;
+            Ok(Arc::new(Mutex::new(store)))
         } else {
-            ASYNC_INSTANCE
+            Ok(ASYNC_INSTANCE
                 .get_or_init(|| async {
-                    Arc::new(Mutex::new(
-                        KnowledgeStore::new_with_os_settings(os, base_dir)
-                            .await
-                            .expect("Failed to create async knowledge store"),
-                    ))
+                    // Check for migration before initializing the client
+                    let global_dir = crate::util::directories::global_knowledge_dir(os)
+                        .expect("Failed to get global directory");
+                    
+                    Self::migrate_legacy_knowledge_base(&global_dir).await;
+
+                    let store = Self::new_with_os_settings(os, agent_name)
+                        .await
+                        .expect("Failed to create knowledge store");
+                    Arc::new(Mutex::new(store))
                 })
                 .await
-                .clone()
+                .clone())
         }
     }
+
+    /// Helper function to copy directory recursively
+    fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> std::io::Result<bool> {
+        let mut copied = false;
+        if !dst.exists() {
+            std::fs::create_dir_all(dst)?;
+        }
+
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+
+            if src_path.is_dir() {
+                if Self::copy_dir_recursive(&src_path, &dst_path)? {
+                    copied = true;
+                }
+            } else {
+                std::fs::copy(&src_path, &dst_path)?;
+                copied = true;
+            }
+        }
+        Ok(copied)
+    }
+
+    /// Migrate legacy knowledge base from old location if needed
+    async fn migrate_legacy_knowledge_base(knowledge_dir: &PathBuf) -> bool {
+        // Create global directory first
+        std::fs::create_dir_all(&knowledge_dir).ok();
+
+        let mut migrated = false;
+
+        // Check both possible source locations
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let source_dirs = vec![
+            home.join(".semantic_search"),
+        ];
+
+        // Migrate from legacy locations
+        for src in source_dirs {
+            if src.exists() {
+                if let Ok(entries) = std::fs::read_dir(&src) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let src_path = entry.path();
+                        let dst_path = knowledge_dir.join(&name);
+
+                        if !dst_path.exists() {
+                            if let Ok(true) = Self::copy_dir_recursive(&src_path, &dst_path) {
+                                migrated = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Migrate from knowledge_bases root to __global_knowledge__ (but avoid self-copy)
+        let knowledge_bases_root = knowledge_dir.parent();
+        if let Some(kb_root) = knowledge_bases_root {
+            if kb_root.exists() && kb_root != knowledge_dir {
+                if let Ok(entries) = std::fs::read_dir(kb_root) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let src_path = entry.path();
+                        
+                        // Skip the __global_knowledge__ directory itself to avoid recursion
+                        if name == "__global_knowledge__" {
+                            continue;
+                        }
+                        
+                        // Skip database files - only migrate knowledge contexts and metadata
+                        let name_str = name.to_string_lossy();
+                        if name_str == "models" || name_str.starts_with('.') {
+                            continue;
+                        }
+                        
+                        // Only migrate directories that look like UUIDs or agent names, and contexts.json
+                        let dst_path = knowledge_dir.join(&name);
+                        if !dst_path.exists() {
+                            if src_path.is_dir() {
+                                if let Ok(true) = Self::copy_dir_recursive(&src_path, &dst_path) {
+                                    migrated = true;
+                                }
+                            } else if name_str == "contexts.json" {
+                                if std::fs::copy(&src_path, &dst_path).is_ok() {
+                                    migrated = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        migrated
+    }
+
+
 
     /// Create SemanticSearchConfig from database settings with fallbacks to defaults
     fn create_config_from_db_settings(
@@ -254,28 +292,18 @@ impl KnowledgeStore {
         }
     }
 
-    /// Create instance with database settings from OS - creates both agent and global clients
-    pub async fn new_with_os_settings(os: &crate::os::Os, base_dir: PathBuf) -> Result<Self> {
-        // Extract agent name from base_dir if it's an agent directory
-        let agent_name = if let Some(parent) = base_dir.parent() {
-            if parent.file_name().and_then(|n| n.to_str()) == Some("knowledge_bases") {
-                base_dir.file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
+    /// Create instance with database settings from OS - for tests only
+    async fn new_with_os_settings(os: &crate::os::Os, agent_name: Option<&str>) -> Result<Self> {
         // Always create global client
         let global_dir = crate::util::directories::global_knowledge_dir(os)?;
+        
         let global_config = Self::create_config_from_db_settings(os, global_dir.clone());
         let global_client = AsyncSemanticSearchClient::with_config(&global_dir, global_config)
             .await
-            .map_err(|e| eyre::eyre!("Failed to create global client: {}", e))?;
+            .map_err(|e| eyre::eyre!("Failed to create global client at {}: {}", global_dir.display(), e))?;
 
-        // Try to create agent client - first from extracted agent name, then try to find active agent
-        let agent_client = if let Some(ref agent) = agent_name {
+        // Create agent client if name provided
+        let agent_client = if let Some(agent) = agent_name {
             let agent_dir = crate::util::directories::agent_knowledge_dir(os, agent)?;
             let agent_config = Self::create_config_from_db_settings(os, agent_dir.clone());
             AsyncSemanticSearchClient::with_config(&agent_dir, agent_config).await.ok()

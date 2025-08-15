@@ -197,7 +197,7 @@ pub fn agent_knowledge_dir(os: &Os, agent_name: &str) -> Result<PathBuf> {
 
 /// The directory for global knowledge base storage
 pub fn global_knowledge_dir(os: &Os) -> Result<PathBuf> {
-    Ok(knowledge_bases_dir(os)?.join("global_knowledge"))
+    Ok(knowledge_bases_dir(os)?.join("__global_knowledge__"))
 }
 
 /// The path to the fig settings file

@@ -114,6 +114,11 @@ impl KnowledgeSubcommand {
         }
     }
 
+    /// Get the current agent name from the session
+    fn get_agent_name(session: &ChatSession) -> Option<&str> {
+        session.conversation.agents.get_active().map(|a| a.name.as_str())
+    }
+
     async fn execute_operation(&self, os: &Os, session: &mut ChatSession) -> OperationResult {
         match self {
             KnowledgeSubcommand::Show => {
@@ -129,11 +134,11 @@ impl KnowledgeSubcommand {
                 index_type,
                 global,
             } => Self::handle_add(os, session, path, include, exclude, index_type, *global).await,
-            KnowledgeSubcommand::Remove { path, global } => Self::handle_remove(os, path, *global).await,
-            KnowledgeSubcommand::Update { path } => Self::handle_update(os, path).await,
+            KnowledgeSubcommand::Remove { path, global } => Self::handle_remove(os, session, path, *global).await,
+            KnowledgeSubcommand::Update { path } => Self::handle_update(os, session, path).await,
             KnowledgeSubcommand::Clear { global } => Self::handle_clear(os, session, *global).await,
-            KnowledgeSubcommand::Status => Self::handle_status(os).await,
-            KnowledgeSubcommand::Cancel { operation_id } => Self::handle_cancel(os, operation_id.as_deref()).await,
+            KnowledgeSubcommand::Status => Self::handle_status(os, session).await,
+            KnowledgeSubcommand::Cancel { operation_id } => Self::handle_cancel(os, session, operation_id.as_deref()).await,
         }
     }
 
@@ -155,7 +160,7 @@ impl KnowledgeSubcommand {
                 style::SetAttribute(crossterm::style::Attribute::Reset),
             )?;
 
-            match KnowledgeStore::get_async_instance_with_agent(os, Some(agent), false).await {
+            match KnowledgeStore::get_async_instance(os, Some(agent)).await {
                 Ok(store) => {
                     let store = store.lock().await;
                     let entries = store.get_all_for_scope(false).await.unwrap_or_default();
@@ -190,7 +195,7 @@ impl KnowledgeSubcommand {
             style::SetAttribute(crossterm::style::Attribute::Reset),
         )?;
 
-        match KnowledgeStore::get_async_instance_with_agent(os, agent_name.as_deref(), true).await {
+        match KnowledgeStore::get_async_instance(os, agent_name.as_deref()).await {
             Ok(store) => {
                 let store = store.lock().await;
                 let entries = store.get_all_for_scope(true).await.unwrap_or_default();
@@ -300,7 +305,7 @@ impl KnowledgeSubcommand {
                     .map(|cm| cm.current_profile.as_str());
 
                 let async_knowledge_store =
-                    match KnowledgeStore::get_async_instance_with_agent(os, agent_name, is_global).await {
+                    match KnowledgeStore::get_async_instance(os, agent_name).await {
                         Ok(store) => store,
                         Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
                     };
@@ -346,10 +351,11 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle remove operation
-    async fn handle_remove(os: &Os, path: &str, global: bool) -> OperationResult {
+    async fn handle_remove(os: &Os, session: &ChatSession, path: &str, global: bool) -> OperationResult {
         let sanitized_path = sanitize_path_tool_arg(os, path);
+        let agent_name = Self::get_agent_name(session);
 
-        let async_knowledge_store = match KnowledgeStore::get_async_instance_with_os(os).await {
+        let async_knowledge_store = match KnowledgeStore::get_async_instance(os, agent_name).await {
             Ok(store) => store,
             Err(e) => return OperationResult::Error(format!("Error accessing knowledge base: {}", e)),
         };
@@ -368,10 +374,11 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle update operation
-    async fn handle_update(os: &Os, path: &str) -> OperationResult {
+    async fn handle_update(os: &Os, session: &ChatSession, path: &str) -> OperationResult {
         match Self::validate_and_sanitize_path(os, path) {
             Ok(sanitized_path) => {
-                let async_knowledge_store = match KnowledgeStore::get_async_instance_with_os(os).await {
+                let agent_name = Self::get_agent_name(session);
+                let async_knowledge_store = match KnowledgeStore::get_async_instance(os, agent_name).await {
                     Ok(store) => store,
                     Err(e) => {
                         return OperationResult::Error(format!("Error accessing knowledge base directory: {}", e));
@@ -409,7 +416,7 @@ impl KnowledgeSubcommand {
             return OperationResult::Info("Clear operation cancelled".to_string());
         }
 
-        let async_knowledge_store = match KnowledgeStore::get_async_instance_with_os(os).await {
+        let async_knowledge_store = match KnowledgeStore::get_async_instance(os, None).await {
             Ok(store) => store,
             Err(e) => return OperationResult::Error(format!("Error accessing knowledge base directory: {}", e)),
         };
@@ -442,8 +449,9 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle status operation
-    async fn handle_status(os: &Os) -> OperationResult {
-        let async_knowledge_store = match KnowledgeStore::get_async_instance_with_os(os).await {
+    async fn handle_status(os: &Os, session: &ChatSession) -> OperationResult {
+        let agent_name = Self::get_agent_name(session);
+        let async_knowledge_store = match KnowledgeStore::get_async_instance(os, agent_name).await {
             Ok(store) => store,
             Err(e) => return OperationResult::Error(format!("Error accessing knowledge base directory: {}", e)),
         };
@@ -553,8 +561,9 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle cancel operation
-    async fn handle_cancel(os: &Os, operation_id: Option<&str>) -> OperationResult {
-        let async_knowledge_store = match KnowledgeStore::get_async_instance_with_os(os).await {
+    async fn handle_cancel(os: &Os, session: &ChatSession, operation_id: Option<&str>) -> OperationResult {
+        let agent_name = Self::get_agent_name(session);
+        let async_knowledge_store = match KnowledgeStore::get_async_instance(os, agent_name).await {
             Ok(store) => store,
             Err(e) => return OperationResult::Error(format!("Error accessing knowledge base directory: {}", e)),
         };

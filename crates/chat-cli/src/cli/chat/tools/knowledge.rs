@@ -316,12 +316,9 @@ impl Knowledge {
         let agent_name = agent.map(|a| a.name.as_str());
         
         // Use agent-aware knowledge store
-        let async_knowledge_store = if let Some(agent_name) = agent_name {
-            KnowledgeStore::get_async_instance_with_agent(os, Some(agent_name), false).await
-        } else {
-            KnowledgeStore::get_async_instance_with_os(os).await
-        }
-        .map_err(|e| eyre::eyre!("Failed to access knowledge base: {}", e))?;
+        let async_knowledge_store = KnowledgeStore::get_async_instance(os, agent_name)
+            .await
+            .map_err(|e| eyre::eyre!("Failed to access knowledge base: {}", e))?;
         let mut store = async_knowledge_store.lock().await;
 
         let result = match self {
