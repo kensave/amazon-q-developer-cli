@@ -25,6 +25,7 @@ pub struct AddOptions {
     pub include_patterns: Vec<String>,
     pub exclude_patterns: Vec<String>,
     pub embedding_type: Option<String>,
+    pub is_global: Option<bool>
 }
 
 impl AddOptions {
@@ -69,6 +70,7 @@ impl AddOptions {
             include_patterns: default_include,
             exclude_patterns: default_exclude,
             embedding_type: default_embedding_type,
+            is_global: Some(false)
         }
     }
 
@@ -86,6 +88,12 @@ impl AddOptions {
         self.embedding_type = embedding_type;
         self
     }
+
+    pub fn with_is_global(mut self, is_global: Option<bool>) -> Self {
+        self.is_global = is_global;
+        self
+    }
+
 }
 
 #[derive(Debug)]
@@ -334,14 +342,8 @@ impl KnowledgeStore {
         Ok(entries)
     }
 
-    /// Add context with flexible options - routes to global client by default
-    /// Add context to agent scope by default (for function calling)
-    pub async fn add(&mut self, name: &str, path_str: &str, options: AddOptions) -> Result<String, String> {
-        self.add_with_scope(name, path_str, options, false).await
-    }
-
     /// Add context to specific scope (agent or global)
-    pub async fn add_with_scope(&mut self, name: &str, path_str: &str, options: AddOptions, is_global: bool) -> Result<String, String> {
+    pub async fn add(&mut self, name: &str, path_str: &str, options: AddOptions) -> Result<String, String> {
         let path_buf = std::path::PathBuf::from(path_str);
         let canonical_path = path_buf
             .canonicalize()
@@ -390,7 +392,7 @@ impl KnowledgeStore {
             },
         };
 
-        let client = if is_global {
+        let client = if options.is_global.unwrap_or(false) {
             &mut self.global_client
         } else if let Some(ref mut agent_client) = self.agent_client {
             agent_client
@@ -499,7 +501,7 @@ impl KnowledgeStore {
     /// Cancel operation - delegates to async client
     pub async fn cancel_operation(&mut self, operation_id: Option<&str>) -> Result<String, String> {
         if let Some(short_id) = operation_id {
-            let available_ops = self.client.list_operation_ids().await;
+            let available_ops = self.global_client.list_operation_ids().await;
             if available_ops.is_empty() {
                 // This is fine.
                 return Ok("No operations to cancel".to_string());
@@ -686,8 +688,9 @@ impl KnowledgeStore {
                     include_patterns: context.include_patterns.clone(),
                     exclude_patterns: context.exclude_patterns.clone(),
                     embedding_type: None,
+                    is_global: Some(false)
                 };
-                return self.add_with_scope(&context.name, path_str, options, false).await;
+                return self.add(&context.name, path_str, options).await;
             }
         }
         
@@ -705,8 +708,9 @@ impl KnowledgeStore {
                 include_patterns: context.include_patterns.clone(),
                 exclude_patterns: context.exclude_patterns.clone(),
                 embedding_type: None,
+                is_global: Some(true)
             };
-            self.add_with_scope(&context.name, path_str, options, true).await
+            self.add(&context.name, path_str, options).await
         } else {
             Err(format!("No context found with path '{}'", path_str))
         }
@@ -730,8 +734,9 @@ impl KnowledgeStore {
                     include_patterns: context.include_patterns.clone(),
                     exclude_patterns: context.exclude_patterns.clone(),
                     embedding_type: None,
+                    is_global: Some(false)
                 };
-                return self.add_with_scope(&context.name, path_str, options, false).await;
+                return self.add(&context.name, path_str, options).await;
             }
         }
         
@@ -750,8 +755,9 @@ impl KnowledgeStore {
                 include_patterns: context.include_patterns.clone(),
                 exclude_patterns: context.exclude_patterns.clone(),
                 embedding_type: None,
+                is_global: Some(true)
             };
-            self.add_with_scope(&context.name, path_str, options, true).await
+            self.add(&context.name, path_str, options).await
         } else {
             Err(format!("Context '{}' not found", context_id))
         }
@@ -774,8 +780,9 @@ impl KnowledgeStore {
                     include_patterns: context.include_patterns.clone(),
                     exclude_patterns: context.exclude_patterns.clone(),
                     embedding_type: None,
+                    is_global: Some(false)
                 };
-                return self.add_with_scope(name, path_str, options, false).await;
+                return self.add(name, path_str, options).await;
             }
         }
         
@@ -793,8 +800,9 @@ impl KnowledgeStore {
                 include_patterns: context.include_patterns.clone(),
                 exclude_patterns: context.exclude_patterns.clone(),
                 embedding_type: None,
+                is_global: Some(true)
             };
-            self.add_with_scope(name, path_str, options, true).await
+            self.add(name, path_str, options).await
         } else {
             Err(format!("Context with name '{}' not found", name))
         }

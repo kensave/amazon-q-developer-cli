@@ -293,7 +293,8 @@ impl KnowledgeSubcommand {
         path: &str,
         include_patterns: &[String],
         exclude_patterns: &[String],
-        index_type: &Option<String>
+        index_type: &Option<String>,
+        is_global: bool
     ) -> OperationResult {
         match Self::validate_and_sanitize_path(os, path) {
             Ok(sanitized_path) => {
@@ -333,9 +334,10 @@ impl KnowledgeSubcommand {
                 let options = crate::util::knowledge_store::AddOptions::new()
                     .with_include_patterns(include)
                     .with_exclude_patterns(exclude)
-                    .with_embedding_type(embedding_type_resolved);
+                    .with_embedding_type(embedding_type_resolved)
+                    .with_is_global(Some(is_global));
 
-                match store.add_with_scope(path, &sanitized_path.clone(), options, is_global).await {
+                match store.add(path, &sanitized_path.clone(), options).await {
                     Ok(message) => OperationResult::Info(message),
                     Err(e) => {
                         if e.contains("Invalid include pattern") || e.contains("Invalid exclude pattern") {

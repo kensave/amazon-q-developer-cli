@@ -336,7 +336,7 @@ impl Knowledge {
                     .add(
                         &add.name,
                         &value_to_use,
-                        crate::util::knowledge_store::AddOptions::with_db_defaults(os),
+                        crate::util::knowledge_store::AddOptions::with_db_defaults(os)
                     )
                     .await
                 {
