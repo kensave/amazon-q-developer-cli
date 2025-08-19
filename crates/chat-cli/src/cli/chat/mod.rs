@@ -1572,6 +1572,9 @@ impl ChatSession {
         user_input = sanitize_unicode_tags(&user_input);
         let input = user_input.trim();
 
+        // Record user input to conversation history (fire and forget)
+        self.record_conversation_input(os, input);
+
         // handle image path
         if let Some(chat_state) = does_input_reference_file(input) {
             return Ok(chat_state);
@@ -2149,6 +2152,10 @@ impl ChatSession {
                             }
                             self.conversation.push_assistant_message(os, message, Some(rm.clone()));
                             self.user_turn_request_metadata.push(rm);
+                            
+                            // Record assistant response to conversation history (fire and forget)
+                            self.record_conversation_response(os, &buf);
+                            
                             ended = true;
                         },
                     }
@@ -2603,6 +2610,44 @@ impl ChatSession {
 
             os.telemetry.send_tool_use_suggested(&os.database, event).await.ok();
         }
+    }
+
+    /// Record user input to conversation history (fire and forget)
+    fn record_conversation_input(&self, os: &Os, input: &str) {
+        let os = os.clone();
+        let input = input.to_string();
+        let agent_name = self.conversation.agents.get_active().map(|a| a.name.clone());
+        
+        tokio::spawn(async move {
+            if let Ok(store) = crate::util::knowledge_store::KnowledgeStore::get_async_instance(
+                &os, 
+                agent_name.as_deref()
+            ).await {
+                let store = store.lock().await;
+                let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+                let content = format!("[{}] User: {}", timestamp, input);
+                let _ = store.add_conversation_content(&content).await;
+            }
+        });
+    }
+
+    /// Record assistant response to conversation history (fire and forget)
+    fn record_conversation_response(&self, os: &Os, response: &str) {
+        let os = os.clone();
+        let response = response.to_string();
+        let agent_name = self.conversation.agents.get_active().map(|a| a.name.clone());
+        
+        tokio::spawn(async move {
+            if let Ok(store) = crate::util::knowledge_store::KnowledgeStore::get_async_instance(
+                &os, 
+                agent_name.as_deref()
+            ).await {
+                let store = store.lock().await;
+                let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+                let content = format!("[{}] Assistant: {}", timestamp, response);
+                let _ = store.add_conversation_content(&content).await;
+            }
+        });
     }
 
     fn terminal_width(&self) -> usize {

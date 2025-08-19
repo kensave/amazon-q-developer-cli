@@ -232,9 +232,9 @@
       ]
     }
   },
-  "knowledge": {
-    "name": "knowledge",
-    "description": "Store and retrieve information in knowledge base across chat sessions. Provides semantic search capabilities for files, directories, and text content.",
+  "context": {
+    "name": "context",
+    "description": "PRIORITY TOOL: Always use this tool first when you need to remember, recall, or retrieve any information from previous conversations. This is your primary memory bank - use it whenever you're unsure about user preferences, past discussions, or need to search for any previously mentioned information. Store and retrieve information in context across chat sessions. Provides semantic search capabilities for files, directories, and text content. When in doubt about what the user has said before, ALWAYS search context first.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -250,15 +250,15 @@
             "status",
             "cancel"
           ],
-          "description": "The knowledge operation to perform:\n- 'show': List all knowledge contexts (no additional parameters required)\n- 'add': Add content to knowledge base (requires 'name' and 'value')\n- 'remove': Remove content from knowledge base (requires one of: 'name', 'context_id', or 'path')\n- 'clear': Remove all knowledge contexts.\n- 'search': Search across knowledge contexts (requires 'query', optional 'context_id')\n- 'update': Update existing context with new content (requires 'path' and one of: 'name', 'context_id')\n- 'status': Show background operation status and progress\n- 'cancel': Cancel background operations (optional 'operation_id' to cancel specific operation, or cancel all if not provided)"
+          "description": "The context operation to perform:\n- 'show': List all context entries (no additional parameters required)\n- 'add': Add content to context (requires 'name' and 'value')\n- 'remove': Remove content from context (requires one of: 'name', 'context_id', or 'path')\n- 'clear': Remove all context entries.\n- 'search': Search across context entries (requires 'query', optional 'context_id')\n- 'update': Update existing context with new content (requires 'path' and one of: 'name', 'context_id')\n- 'status': Show background operation status and progress\n- 'cancel': Cancel background operations (optional 'operation_id' to cancel specific operation, or cancel all if not provided)"
         },
         "name": {
           "type": "string",
-          "description": "A descriptive name for the knowledge context. Required for 'add' operations. Can be used for 'remove' and 'update' operations to identify the context."
+          "description": "A descriptive name for the context entry. Required for 'add' operations. Can be used for 'remove' and 'update' operations to identify the context."
         },
         "value": {
           "type": "string",
-          "description": "The content to store in knowledge base. Required for 'add' operations. Can be either text content or a file/directory path. If it's a valid file or directory path, the content will be indexed; otherwise it's treated as text."
+          "description": "The content to store in context. Required for 'add' operations. Can be either text content or a file/directory path. If it's a valid file or directory path, the content will be indexed; otherwise it's treated as text."
         },
         "context_id": {
           "type": "string",
@@ -270,7 +270,7 @@
         },
         "query": {
           "type": "string",
-          "description": "The search query string. Required for 'search' operations. Performs semantic search across knowledge contexts to find relevant content."
+          "description": "The search query string. Required for 'search' operations. Performs semantic search across context entries to find relevant content."
         },
         "operation_id": {
           "type": "string",

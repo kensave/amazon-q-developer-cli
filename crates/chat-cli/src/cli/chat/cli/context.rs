@@ -96,7 +96,7 @@ impl ContextSubcommand {
                     session.stderr,
                     style::SetAttribute(Attribute::Bold),
                     style::SetForegroundColor(Color::Magenta),
-                    style::Print(format!("👤 Agent ({}):\n", context_manager.current_profile)),
+                    style::Print(format!("  👤 Agent ({}):\n", context_manager.current_profile)),
                     style::SetAttribute(Attribute::Reset),
                 )?;
 
@@ -104,12 +104,12 @@ impl ContextSubcommand {
                     execute!(
                         session.stderr,
                         style::SetForegroundColor(Color::DarkGrey),
-                        style::Print("    <none>\n\n"),
+                        style::Print("        <none>\n\n"),
                         style::SetForegroundColor(Color::Reset)
                     )?;
                 } else {
                     for path in &agent_owned_list {
-                        execute!(session.stderr, style::Print(format!("    {} ", path.get_path_as_str())))?;
+                        execute!(session.stderr, style::Print(format!("        {} ", path.get_path_as_str())))?;
                         if let Ok(context_files) = context_manager
                             .get_context_files_by_path(os, path.get_path_as_str())
                             .await
@@ -136,7 +136,7 @@ impl ContextSubcommand {
                     session.stderr,
                     style::SetAttribute(Attribute::Bold),
                     style::SetForegroundColor(Color::Magenta),
-                    style::Print("💬 Session (temporary):\n"),
+                    style::Print("  💬 Session (temporary):\n"),
                     style::SetAttribute(Attribute::Reset),
                 )?;
 
@@ -144,12 +144,12 @@ impl ContextSubcommand {
                     execute!(
                         session.stderr,
                         style::SetForegroundColor(Color::DarkGrey),
-                        style::Print("    <none>\n\n"),
+                        style::Print("        <none>\n\n"),
                         style::SetForegroundColor(Color::Reset)
                     )?;
                 } else {
                     for path in &session_owned_list {
-                        execute!(session.stderr, style::Print(format!("    {} ", path.get_path_as_str())))?;
+                        execute!(session.stderr, style::Print(format!("        {} ", path.get_path_as_str())))?;
                         if let Ok(context_files) = context_manager
                             .get_context_files_by_path(os, path.get_path_as_str())
                             .await
@@ -360,15 +360,5 @@ impl ContextSubcommand {
         Ok(ChatState::PromptUser {
             skip_printing_tools: true,
         })
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            ContextSubcommand::Show { .. } => "show",
-            ContextSubcommand::Add { .. } => "add",
-            ContextSubcommand::Remove { .. } => "remove",
-            ContextSubcommand::Clear => "clear",
-            ContextSubcommand::Hooks => "hooks",
-        }
     }
 }

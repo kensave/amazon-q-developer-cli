@@ -47,7 +47,16 @@ impl Default for Source {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema, Hash)]
 pub struct Hook {
     /// The command to run when the hook is triggered
-    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+
+    /// The tool name to execute when the hook is triggered
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+
+    /// Arguments to pass to the tool
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_args: Option<serde_json::Value>,
 
     /// Max time the hook can run before it throws a timeout error
     #[serde(default = "Hook::default_timeout_ms")]
@@ -69,7 +78,21 @@ pub struct Hook {
 impl Hook {
     pub fn new(command: String, source: Source) -> Self {
         Self {
-            command,
+            command: Some(command),
+            tool_name: None,
+            tool_args: None,
+            timeout_ms: Self::default_timeout_ms(),
+            max_output_size: Self::default_max_output_size(),
+            cache_ttl_seconds: Self::default_cache_ttl_seconds(),
+            source,
+        }
+    }
+
+    pub fn new_tool(tool_name: String, tool_args: Option<serde_json::Value>, source: Source) -> Self {
+        Self {
+            command: None,
+            tool_name: Some(tool_name),
+            tool_args,
             timeout_ms: Self::default_timeout_ms(),
             max_output_size: Self::default_max_output_size(),
             cache_ttl_seconds: Self::default_cache_ttl_seconds(),

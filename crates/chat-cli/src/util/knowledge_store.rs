@@ -13,6 +13,8 @@ use semantic_search_client::types::{
     SearchResult,
 };
 use tokio::sync::Mutex;
+
+const CONVERSATION_HISTORY_NAME: &str = "Conversation History";
 use uuid::Uuid;
 
 use crate::os::Os;
@@ -25,7 +27,6 @@ pub struct AddOptions {
     pub include_patterns: Vec<String>,
     pub exclude_patterns: Vec<String>,
     pub embedding_type: Option<String>,
-    pub is_global: Option<bool>
 }
 
 impl AddOptions {
@@ -70,7 +71,6 @@ impl AddOptions {
             include_patterns: default_include,
             exclude_patterns: default_exclude,
             embedding_type: default_embedding_type,
-            is_global: Some(false)
         }
     }
 
@@ -89,27 +89,7 @@ impl AddOptions {
         self
     }
 
-    pub fn with_is_global(mut self, is_global: Option<bool>) -> Self {
-        self.is_global = is_global;
-        self
-    }
-
 }
-
-#[derive(Debug)]
-pub enum KnowledgeError {
-    ClientError(String),
-}
-
-impl std::fmt::Display for KnowledgeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KnowledgeError::ClientError(msg) => write!(f, "Client error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for KnowledgeError {}
 
 #[derive(Debug, Clone)]
 pub struct KnowledgeEntry {
@@ -119,8 +99,7 @@ pub struct KnowledgeEntry {
 
 /// Async knowledge store - manages agent and global clients
 pub struct KnowledgeStore {
-    agent_client: Option<AsyncSemanticSearchClient>,
-    global_client: AsyncSemanticSearchClient,
+    agent_client: AsyncSemanticSearchClient,
 }
 
 impl KnowledgeStore {
@@ -303,36 +282,68 @@ impl KnowledgeStore {
     /// Create instance with database settings from OS - for tests only
     async fn new_with_os_settings(os: &crate::os::Os, agent_name: Option<&str>) -> Result<Self> {
         // Always create global client
-        let global_dir = crate::util::directories::global_knowledge_dir(os)?;
-        
-        let global_config = Self::create_config_from_db_settings(os, global_dir.clone());
-        let global_client = AsyncSemanticSearchClient::with_config(&global_dir, global_config)
+        // Always create agent client, use default if no name provided
+        let agent_name = agent_name.unwrap_or("default");
+        let agent_dir = crate::util::directories::agent_knowledge_dir(os, agent_name)?;
+        let agent_config = Self::create_config_from_db_settings(os, agent_dir.clone());
+        let agent_client = AsyncSemanticSearchClient::with_config(&agent_dir, agent_config)
             .await
-            .map_err(|e| eyre::eyre!("Failed to create global client at {}: {}", global_dir.display(), e))?;
+            .map_err(|e| eyre::eyre!("Failed to create agent client at {}: {}", agent_dir.display(), e))?;
 
-        // Create agent client if name provided
-        let agent_client = if let Some(agent) = agent_name {
-            let agent_dir = crate::util::directories::agent_knowledge_dir(os, agent)?;
-            let agent_config = Self::create_config_from_db_settings(os, agent_dir.clone());
-            AsyncSemanticSearchClient::with_config(&agent_dir, agent_config).await.ok()
-        } else {
-            None
-        };
-
-        Ok(Self {
+        let store = Self {
             agent_client,
-            global_client,
-        })
+        };
+        // Auto-create "Conversation History" context if it doesn't exist
+        store.ensure_conversation_context().await?;
+
+        Ok(store)
     }
 
-    /// Get all contexts from appropriate client
+    /// Ensure "Conversation History" context exists (BM25 for fast text search)
+    /// Ensure "Conversation History" context exists (BM25 for fast text search)
+    async fn ensure_conversation_context(&self) -> Result<()> {
+        let contexts = self.agent_client.get_contexts().await;
+        let conversation_exists = contexts.iter().any(|c| c.name == CONVERSATION_HISTORY_NAME);
+        if !conversation_exists {
+            // Create conversation context as semantic (Best embedding for better search quality)
+            let _ = self.agent_client.add_context_from_text(
+                CONVERSATION_HISTORY_NAME,
+                "Automatically created context for conversation history",
+                Some(semantic_search_client::embedding::EmbeddingType::Best), // Semantic context
+            ).await?;
+        }
+        Ok(())
+    }
+
+    /// Add conversation content to the "Conversation History" context
+    pub async fn add_conversation_content(&self, content: &str) -> Result<()> {
+        // Find the Conversation History context
+        let contexts = self.agent_client.get_contexts().await;
+        
+        if let Some(conv_context) = contexts.iter().find(|c| c.name == CONVERSATION_HISTORY_NAME) {
+            self.agent_client.add_text_to_context(&conv_context.id, content).await
+                .map_err(|e| eyre::eyre!("Failed to add conversation content: {}", e))?;
+        }
+        Ok(())
+    }
+
+    /// Add content to an existing context
+    pub async fn add_to_context(&self, context_id: &str, content: &str) -> Result<()> {
+        self.agent_client.add_to_context(context_id, content).await
+            .map_err(|e| eyre::eyre!("Failed to add content to context: {}", e))
+    }
+
+    /// Get all contexts from agent client
+    pub async fn get_all(&self) -> Result<Vec<KnowledgeContext>, String> {
+        Ok(self.agent_client.get_contexts().await)
+    }
+
+    /// Get all contexts from appropriate client (deprecated - use get_all instead)
     pub async fn get_all_for_scope(&self, is_global: bool) -> Result<Vec<KnowledgeEntry>, String> {
         let contexts = if is_global {
-            self.global_client.get_contexts().await
-        } else if let Some(ref agent_client) = self.agent_client {
-            agent_client.get_contexts().await
+            vec![] // No global client anymore
         } else {
-            return Ok(Vec::new());
+            self.agent_client.get_contexts().await
         };
 
         let entries = contexts.into_iter().map(|context| KnowledgeEntry {
@@ -390,17 +401,10 @@ impl KnowledgeStore {
                 },
                 None => None,
             },
+            id: None, // Let the system generate UUID
         };
 
-        let client = if options.is_global.unwrap_or(false) {
-            &mut self.global_client
-        } else if let Some(ref mut agent_client) = self.agent_client {
-            agent_client
-        } else {
-            return Err("No agent context available for agent-specific knowledge".to_string());
-        };
-
-        match client.add_context(request).await {
+        match self.agent_client.add_context(request).await {
             Ok((operation_id, _)) => {
                 let mut message = format!(
                     "🚀 Started indexing '{}'\n📁 Path: {}\n🆔 Operation ID: {}",
@@ -431,126 +435,66 @@ impl KnowledgeStore {
         }
     }
 
-    /// Get all contexts from both agent and global clients
-    pub async fn get_all(&self) -> Result<Vec<KnowledgeContext>, KnowledgeError> {
-        let mut all_contexts = Vec::new();
-        
-        // Get agent contexts if available
-        if let Some(ref agent_client) = self.agent_client {
-            let agent_contexts = agent_client.get_contexts().await;
-            all_contexts.extend(agent_contexts);
-        }
-        
-        // Get global contexts
-        let global_contexts = self.global_client.get_contexts().await;
-        all_contexts.extend(global_contexts);
-        
-        Ok(all_contexts)
-    }
-
     /// Search - delegates to async client
-    pub async fn search(&self, query: &str, _context_id: Option<&str>) -> Result<Vec<SearchResult>, KnowledgeError> {
+    pub async fn search(&self, query: &str, _context_id: Option<&str>) -> Result<Vec<SearchResult>, String> {
         let mut flattened = Vec::new();
         
-        // Search agent client if available
-        if let Some(ref agent_client) = self.agent_client {
-            if let Ok(agent_results) = agent_client.search_all(query, None).await {
-                for (_, context_results) in agent_results {
-                    flattened.extend(context_results);
-                }
+        // Search agent client
+        if let Ok(agent_results) = self.agent_client.search_all(query, None).await {
+            for (_, context_results) in agent_results {
+                flattened.extend(context_results);
             }
         }
         
-        // Search global client
-        let global_results = self
-            .global_client
-            .search_all(query, None)
-            .await
-            .map_err(|e| KnowledgeError::ClientError(e.to_string()))?;
-
-        for (_, context_results) in global_results {
-            flattened.extend(context_results);
-        }
-
         flattened.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(flattened)
     }
 
-    /// Get status data - combines status from both agent and global clients
+    /// Get status data - only from agent client
     pub async fn get_status_data(&self) -> Result<semantic_search_client::SystemStatus, String> {
-        let mut global_status = self.global_client
+        self.agent_client
             .get_status_data()
             .await
-            .map_err(|e| format!("Failed to get global status data: {}", e))?;
-
-        // If agent client exists, merge its operations with global status
-        if let Some(ref agent_client) = self.agent_client {
-            if let Ok(agent_status) = agent_client.get_status_data().await {
-                // Merge operations from agent client
-                global_status.operations.extend(agent_status.operations);
-                // Update counts
-                global_status.active_count += agent_status.active_count;
-                global_status.waiting_count += agent_status.waiting_count;
-            }
-        }
-
-        Ok(global_status)
+            .map_err(|e| e.to_string())
     }
 
-    /// Cancel operation - delegates to async client
+    /// Cancel operation - only from agent client
     pub async fn cancel_operation(&mut self, operation_id: Option<&str>) -> Result<String, String> {
         if let Some(short_id) = operation_id {
-            let available_ops = self.global_client.list_operation_ids().await;
+            let available_ops = self.agent_client.list_operation_ids().await;
             if available_ops.is_empty() {
-                // This is fine.
-                return Ok("No operations to cancel".to_string());
+                return Ok("No active operations to cancel".to_string());
             }
 
             // Try to parse as full UUID first
             if let Ok(uuid) = Uuid::parse_str(short_id) {
-                self.global_client.cancel_operation(uuid).await.map_err(|e| e.to_string())
+                self.agent_client.cancel_operation(uuid).await.map_err(|e| e.to_string())
             } else {
                 // Try to find by short ID (first 8 characters)
-                if let Some(full_uuid) = self.global_client.find_operation_by_short_id(short_id).await {
-                    self.global_client.cancel_operation(full_uuid).await.map_err(|e| e.to_string())
+                if let Some(full_uuid) = self.agent_client.find_operation_by_short_id(short_id).await {
+                    self.agent_client.cancel_operation(full_uuid).await.map_err(|e| e.to_string())
                 } else {
+                    let available_ops_str: Vec<String> = available_ops.iter().map(|id| id.to_string()[..8].to_string()).collect();
                     Err(format!(
-                        "No operation found matching ID: {}\nAvailable operations:\n{}",
+                        "Operation '{}' not found. Available operations: {}",
                         short_id,
-                        available_ops.join("\n")
+                        available_ops_str.join(", ")
                     ))
                 }
             }
         } else {
-            // Cancel most recent operation (not all operations)
-            self.global_client
+            // Cancel most recent operation
+            self.agent_client
                 .cancel_most_recent_operation()
                 .await
                 .map_err(|e| e.to_string())
         }
     }
 
-    /// Clear contexts from specific scope
-    pub async fn clear_scope(&mut self, is_global: bool) -> Result<String, String> {
-        if is_global {
-            match self.global_client.clear_all_immediate().await {
-                Ok(count) => Ok(format!("✅ Successfully cleared {} global knowledge base entries", count)),
-                Err(e) => Err(format!("Failed to clear global knowledge: {}", e)),
-            }
-        } else if let Some(ref mut agent_client) = self.agent_client {
-            match agent_client.clear_all_immediate().await {
-                Ok(count) => Ok(format!("✅ Successfully cleared {} agent knowledge base entries", count)),
-                Err(e) => Err(format!("Failed to clear agent knowledge: {}", e)),
-            }
-        } else {
-            Err("No agent context available".to_string())
-        }
-    }
-
-    /// Clear all contexts (background operation)
+    /// Clear all contexts - only from agent client
     pub async fn clear(&mut self) -> Result<String, String> {
-        match self.global_client.clear_all().await {
+        match self.agent_client.clear_all().await {
             Ok((operation_id, _cancel_token)) => Ok(format!(
                 "🚀 Started clearing all contexts in background.\n📊 Use 'knowledge status' to check progress.\n🆔 Operation ID: {}",
                 &operation_id.to_string()[..8]
@@ -559,71 +503,11 @@ impl KnowledgeStore {
         }
     }
 
-    /// Remove context by path from specific scope
-    pub async fn remove_by_path_scope(&mut self, path: &str, is_global: bool) -> Result<(), String> {
-        if is_global {
-            if let Some(context) = self.global_client.get_context_by_path(path).await {
-                self.global_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string())
-            } else {
-                Err(format!("No context found with path '{}' in global knowledge base", path))
-            }
-        } else if let Some(ref mut agent_client) = self.agent_client {
-            if let Some(context) = agent_client.get_context_by_path(path).await {
-                agent_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string())
-            } else {
-                Err(format!("No context found with path '{}' in agent knowledge base", path))
-            }
-        } else {
-            Err("No agent context available".to_string())
-        }
-    }
-
-    /// Remove context by name from specific scope
-    pub async fn remove_by_name_scope(&mut self, name: &str, is_global: bool) -> Result<(), String> {
-        if is_global {
-            if let Some(context) = self.global_client.get_context_by_name(name).await {
-                self.global_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string())
-            } else {
-                Err(format!("No context found with name '{}' in global knowledge base", name))
-            }
-        } else if let Some(ref mut agent_client) = self.agent_client {
-            if let Some(context) = agent_client.get_context_by_name(name).await {
-                agent_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string())
-            } else {
-                Err(format!("No context found with name '{}' in agent knowledge base", name))
-            }
-        } else {
-            Err("No agent context available".to_string())
-        }
-    }
-
     /// Remove context by path - checks both agent and global clients
     pub async fn remove_by_path(&mut self, path: &str) -> Result<(), String> {
         // Try agent client first if available
-        if let Some(ref mut agent_client) = self.agent_client {
-            if let Some(context) = agent_client.get_context_by_path(path).await {
-                return agent_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string());
-            }
-        }
-        
-        // Try global client
-        if let Some(context) = self.global_client.get_context_by_path(path).await {
-            self.global_client
+        if let Some(context) = self.agent_client.get_context_by_path(path).await {
+            self.agent_client
                 .remove_context_by_id(&context.id)
                 .await
                 .map_err(|e| e.to_string())
@@ -632,21 +516,10 @@ impl KnowledgeStore {
         }
     }
 
-    /// Remove context by name - checks both agent and global clients
+    /// Remove context by name - checks agent client only
     pub async fn remove_by_name(&mut self, name: &str) -> Result<(), String> {
-        // Try agent client first if available
-        if let Some(ref mut agent_client) = self.agent_client {
-            if let Some(context) = agent_client.get_context_by_name(name).await {
-                return agent_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string());
-            }
-        }
-        
-        // Try global client
-        if let Some(context) = self.global_client.get_context_by_name(name).await {
-            self.global_client
+        if let Some(context) = self.agent_client.get_context_by_name(name).await {
+            self.agent_client
                 .remove_context_by_id(&context.id)
                 .await
                 .map_err(|e| e.to_string())
@@ -655,60 +528,26 @@ impl KnowledgeStore {
         }
     }
 
-    /// Remove context by ID - tries both agent and global clients
+    /// Remove context by ID - tries agent client only
     pub async fn remove_by_id(&mut self, context_id: &str) -> Result<(), String> {
-        // Try agent client first if available
-        if let Some(ref mut agent_client) = self.agent_client {
-            if agent_client.remove_context_by_id(context_id).await.is_ok() {
-                return Ok(());
-            }
-        }
-        
-        // Try global client
-        self.global_client
-            .remove_context_by_id(context_id)
-            .await
-            .map_err(|e| e.to_string())
+        self.agent_client.remove_context_by_id(context_id).await.map_err(|e| e.to_string())
     }
 
-    /// Update context by path - checks both agent and global clients
+    /// Update context by path - checks agent client only
     pub async fn update_by_path(&mut self, path_str: &str) -> Result<String, String> {
-        // Try agent client first if available
-        if let Some(ref mut agent_client) = self.agent_client {
-            if let Some(context) = agent_client.get_context_by_path(path_str).await {
-                // Remove the existing context first
-                agent_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Then add it back with the same name and original patterns (agent scope)
-                let options = AddOptions {
-                    description: None,
-                    include_patterns: context.include_patterns.clone(),
-                    exclude_patterns: context.exclude_patterns.clone(),
-                    embedding_type: None,
-                    is_global: Some(false)
-                };
-                return self.add(&context.name, path_str, options).await;
-            }
-        }
-        
-        // Try global client
-        if let Some(context) = self.global_client.get_context_by_path(path_str).await {
+        if let Some(context) = self.agent_client.get_context_by_path(path_str).await {
             // Remove the existing context first
-            self.global_client
+            self.agent_client
                 .remove_context_by_id(&context.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // Then add it back with the same name and original patterns (global scope)
+            // Then add it back with the same name and original patterns (agent scope)
             let options = AddOptions {
                 description: None,
                 include_patterns: context.include_patterns.clone(),
                 exclude_patterns: context.exclude_patterns.clone(),
                 embedding_type: None,
-                is_global: Some(true)
             };
             self.add(&context.name, path_str, options).await
         } else {
@@ -716,91 +555,21 @@ impl KnowledgeStore {
         }
     }
 
-    /// Update context by ID - finds context in both clients and preserves scope
-    pub async fn update_context_by_id(&mut self, context_id: &str, path_str: &str) -> Result<String, String> {
-        // Try agent client first if available
-        if let Some(ref mut agent_client) = self.agent_client {
-            let agent_contexts = agent_client.get_contexts().await;
-            if let Some(context) = agent_contexts.iter().find(|c| c.id == context_id) {
-                // Remove from agent client
-                agent_client
-                    .remove_context_by_id(context_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Add back to agent scope
-                let options = AddOptions {
-                    description: None,
-                    include_patterns: context.include_patterns.clone(),
-                    exclude_patterns: context.exclude_patterns.clone(),
-                    embedding_type: None,
-                    is_global: Some(false)
-                };
-                return self.add(&context.name, path_str, options).await;
-            }
-        }
-        
-        // Try global client
-        let global_contexts = self.global_client.get_contexts().await;
-        if let Some(context) = global_contexts.iter().find(|c| c.id == context_id) {
-            // Remove from global client
-            self.global_client
-                .remove_context_by_id(context_id)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // Add back to global scope
-            let options = AddOptions {
-                description: None,
-                include_patterns: context.include_patterns.clone(),
-                exclude_patterns: context.exclude_patterns.clone(),
-                embedding_type: None,
-                is_global: Some(true)
-            };
-            self.add(&context.name, path_str, options).await
-        } else {
-            Err(format!("Context '{}' not found", context_id))
-        }
-    }
-
-    /// Update context by name - checks both agent and global clients
+    /// Update context by name - checks agent client only
     pub async fn update_context_by_name(&mut self, name: &str, path_str: &str) -> Result<String, String> {
-        // Try agent client first if available
-        if let Some(ref mut agent_client) = self.agent_client {
-            if let Some(context) = agent_client.get_context_by_name(name).await {
-                // Remove the existing context first
-                agent_client
-                    .remove_context_by_id(&context.id)
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Then add it back with the same name and original patterns (agent scope)
-                let options = AddOptions {
-                    description: None,
-                    include_patterns: context.include_patterns.clone(),
-                    exclude_patterns: context.exclude_patterns.clone(),
-                    embedding_type: None,
-                    is_global: Some(false)
-                };
-                return self.add(name, path_str, options).await;
-            }
-        }
-        
-        // Try global client
-        if let Some(context) = self.global_client.get_context_by_name(name).await {
+        if let Some(context) = self.agent_client.get_context_by_name(name).await {
             // Remove the existing context first
-            self.global_client
+            self.agent_client
                 .remove_context_by_id(&context.id)
                 .await
                 .map_err(|e| e.to_string())?;
 
-            // Then add it back with the same name and original patterns (global scope)
+            // Then add it back with the same name and original patterns (agent scope)
             let options = AddOptions {
                 description: None,
                 include_patterns: context.include_patterns.clone(),
                 exclude_patterns: context.exclude_patterns.clone(),
                 embedding_type: None,
-                is_global: Some(true)
             };
             self.add(name, path_str, options).await
         } else {

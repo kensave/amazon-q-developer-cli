@@ -11,12 +11,12 @@ pub mod profile;
 pub mod prompts;
 pub mod subscribe;
 pub mod tools;
+pub mod unified_context;
 pub mod usage;
 
 use clap::Parser;
 use clear::ClearArgs;
 use compact::CompactArgs;
-use context::ContextSubcommand;
 use editor::EditorArgs;
 use hooks::HooksArgs;
 use knowledge::KnowledgeSubcommand;
@@ -26,6 +26,7 @@ use persist::PersistSubcommand;
 use profile::AgentSubcommand;
 use prompts::PromptsArgs;
 use tools::ToolsArgs;
+use unified_context::UnifiedContextSubcommand;
 
 use crate::cli::chat::cli::subscribe::SubscribeArgs;
 use crate::cli::chat::cli::usage::UsageArgs;
@@ -53,11 +54,10 @@ pub enum SlashCommand {
     Agent(AgentSubcommand),
     #[command(hide = true)]
     Profile,
-    /// Manage context files for the chat session
+    /// Manage context files and knowledge base for the chat session
     #[command(subcommand)]
-    Context(ContextSubcommand),
-    /// (Beta) Manage knowledge base for persistent context storage. Requires "q settings
-    /// chat.enableKnowledge true"
+    Context(UnifiedContextSubcommand),
+    /// (Deprecated) Use /context instead. Manage knowledge base for persistent context storage.
     #[command(subcommand, hide = true)]
     Knowledge(KnowledgeSubcommand),
     /// Open $EDITOR (defaults to vi) to compose a prompt
@@ -117,7 +117,24 @@ impl SlashCommand {
                 })
             },
             Self::Context(args) => args.execute(os, session).await,
-            Self::Knowledge(subcommand) => subcommand.execute(os, session).await,
+            Self::Knowledge(subcommand) => {
+                use crossterm::{
+                    execute,
+                    style,
+                };
+                execute!(
+                    session.stderr,
+                    style::SetForegroundColor(style::Color::Yellow),
+                    style::Print("The /knowledge command is deprecated. Use"),
+                    style::SetForegroundColor(style::Color::Cyan),
+                    style::Print(" /context --knowledge "),
+                    style::SetForegroundColor(style::Color::Yellow),
+                    style::Print("instead.\n"),
+                    style::ResetColor,
+                )?;
+                
+                subcommand.execute(os, session).await
+            },
             Self::PromptEditor(args) => args.execute(session).await,
             Self::Compact(args) => args.execute(os, session).await,
             Self::Tools(args) => args.execute(session).await,

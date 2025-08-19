@@ -349,6 +349,90 @@ impl AsyncSemanticSearchClient {
         self.context_manager.get_contexts().await
     }
 
+    /// Add content to an existing context (supports both text and files)
+    /// 
+    /// # Arguments
+    /// * `context_id` - ID of the existing context
+    /// * `content` - Either text content or file path
+    pub async fn add_to_context(&self, context_id: &str, content: &str) -> Result<()> {
+        // Find the existing context
+        let contexts = self.get_contexts().await;
+        let _context = contexts.iter().find(|c| c.id == context_id)
+            .ok_or_else(|| SemanticSearchError::InvalidArgument(format!("Context '{}' not found", context_id)))?;
+
+        // Process content into text chunks
+        let text_content = if std::path::Path::new(content).exists() {
+            // File path - read file content
+            tokio::fs::read_to_string(content).await
+                .map_err(|e| SemanticSearchError::OperationFailed(format!("Failed to read file: {}", e)))?
+        } else {
+            // Text content
+            content.to_string()
+        };
+
+        // Chunk the text
+        let chunks = crate::processing::chunk_text(&text_content, Some(self.config.chunk_size), Some(self.config.chunk_overlap));
+
+        // Add chunks to existing context
+        self.context_manager.add_text_chunks_to_context(context_id, chunks, self.embedder.as_ref()).await
+            .map_err(|e| SemanticSearchError::OperationFailed(format!("Failed to add chunks to context: {}", e)))
+    }
+
+    /// Add text content directly to an existing context (no file path needed)
+    pub async fn add_text_to_context(&self, context_id: &str, text: &str) -> Result<()> {
+        
+        // Find the existing context
+        let contexts = self.get_contexts().await;
+        let _context = contexts.iter().find(|c| c.id == context_id)
+            .ok_or_else(|| SemanticSearchError::InvalidArgument(format!("Context '{}' not found", context_id)))?;
+        
+        // Chunk the text directly (no file reading)
+        let chunks = crate::processing::chunk_text(text, Some(self.config.chunk_size), Some(self.config.chunk_overlap));
+
+        // Add chunks to existing context
+        match self.context_manager.add_text_chunks_to_context(context_id, chunks, self.embedder.as_ref()).await {
+            Ok(_) => {
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("ERROR: Failed to add chunks to context: {}", e);
+                Err(SemanticSearchError::OperationFailed(format!("Failed to add chunks to context: {}", e)))
+            }
+        }
+    }
+
+    /// Create a new context from text content (no file path required)
+    pub async fn add_context_from_text(
+        &self,
+        context_name: &str,
+        context_description: &str,
+        embedding_type: Option<crate::embedding::EmbeddingType>,
+    ) -> Result<String> {
+        // Generate a unique ID for this context
+        let context_id = super::utils::generate_context_id();
+
+        // Create context request
+        let request = crate::types::AddContextRequest {
+            name: context_name.to_string(),
+            description: context_description.to_string(),
+            path: std::env::temp_dir().join(&context_id), // Temp path for text-only context
+            persistent: true,
+            include_patterns: None,
+            exclude_patterns: None,
+            embedding_type,
+            id: Some(context_id.clone()),
+        };
+
+        // Create the context directory
+        std::fs::create_dir_all(&request.path)
+            .map_err(|e| crate::error::SemanticSearchError::OperationFailed(format!("Failed to create context directory: {}", e)))?;
+
+        // Add context through normal flow but without indexing files
+        let (_uuid, _token) = self.add_context(request).await?;
+        
+        Ok(context_id)
+    }
+
     /// Performs a semantic search across all available contexts.
     ///
     /// This method searches through all indexed contexts using the provided query text,

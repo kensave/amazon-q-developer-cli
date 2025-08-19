@@ -1,0 +1,23 @@
+{
+  "userPromptSubmit": [
+    {
+      "tool_name": "context",
+      "tool_args": {
+        "command": "search",
+        "query": "${USER_PROMPT}",
+        "limit": 3
+      },
+      "timeout_ms": 5000,
+      "max_output_size": 2048,
+      "cache_ttl_seconds": 60
+    }
+  ],
+  "agentSpawn": [
+    {
+      "command": "echo 'Agent started'",
+      "timeout_ms": 1000,
+      "max_output_size": 100,
+      "cache_ttl_seconds": 0
+    }
+  ]
+}

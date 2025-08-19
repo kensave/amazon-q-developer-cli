@@ -3,7 +3,7 @@ pub mod execute;
 pub mod fs_read;
 pub mod fs_write;
 pub mod gh_issue;
-pub mod knowledge;
+pub mod context;
 pub mod thinking;
 pub mod use_aws;
 
@@ -29,7 +29,7 @@ use eyre::Result;
 use fs_read::FsRead;
 use fs_write::FsWrite;
 use gh_issue::GhIssue;
-use knowledge::Knowledge;
+use context::Context;
 use serde::{
     Deserialize,
     Serialize,
@@ -63,7 +63,7 @@ pub const NATIVE_TOOLS: [&str; 7] = [
     "execute_bash",
     "use_aws",
     "gh_issue",
-    "knowledge",
+    "context",
     "thinking",
 ];
 
@@ -77,7 +77,7 @@ pub enum Tool {
     UseAws(UseAws),
     Custom(CustomTool),
     GhIssue(GhIssue),
-    Knowledge(Knowledge),
+    Context(Context),
     Thinking(Thinking),
 }
 
@@ -94,7 +94,7 @@ impl Tool {
             Tool::UseAws(_) => "use_aws",
             Tool::Custom(custom_tool) => &custom_tool.name,
             Tool::GhIssue(_) => "gh_issue",
-            Tool::Knowledge(_) => "knowledge",
+            Tool::Context(_) => "context",
             Tool::Thinking(_) => "thinking (prerelease)",
         }
         .to_owned()
@@ -110,7 +110,7 @@ impl Tool {
             Tool::Custom(custom_tool) => custom_tool.eval_perm(agent),
             Tool::GhIssue(_) => PermissionEvalResult::Allow,
             Tool::Thinking(_) => PermissionEvalResult::Allow,
-            Tool::Knowledge(knowledge) => knowledge.eval_perm(agent),
+            Tool::Context(context) => context.eval_perm(agent),
         }
     }
 
@@ -129,7 +129,7 @@ impl Tool {
             Tool::UseAws(use_aws) => use_aws.invoke(os, stdout).await,
             Tool::Custom(custom_tool) => custom_tool.invoke(os, stdout).await,
             Tool::GhIssue(gh_issue) => gh_issue.invoke(os, stdout).await,
-            Tool::Knowledge(knowledge) => knowledge.invoke(os, stdout, agent).await,
+            Tool::Context(context) => context.invoke(os, stdout, agent).await,
             Tool::Thinking(think) => think.invoke(stdout).await,
         }
     }
@@ -143,7 +143,7 @@ impl Tool {
             Tool::UseAws(use_aws) => use_aws.queue_description(output),
             Tool::Custom(custom_tool) => custom_tool.queue_description(output),
             Tool::GhIssue(gh_issue) => gh_issue.queue_description(output),
-            Tool::Knowledge(knowledge) => knowledge.queue_description(os, output).await,
+            Tool::Context(context) => context.queue_description(os, output).await,
             Tool::Thinking(thinking) => thinking.queue_description(output),
         }
     }
@@ -157,7 +157,7 @@ impl Tool {
             Tool::UseAws(use_aws) => use_aws.validate(os).await,
             Tool::Custom(custom_tool) => custom_tool.validate(os).await,
             Tool::GhIssue(gh_issue) => gh_issue.validate(os).await,
-            Tool::Knowledge(knowledge) => knowledge.validate(os).await,
+            Tool::Context(context) => context.validate(os).await,
             Tool::Thinking(think) => think.validate(os).await,
         }
     }

@@ -1,0 +1,29 @@
+   Compiling ring v0.17.14
+   Compiling rustls v0.23.31
+   Compiling rustls v0.21.12
+   Compiling chat_cli v1.14.0 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli)
+    Checking rustls-webpki v0.103.4
+    Checking sct v0.7.1
+    Checking rustls-webpki v0.101.7
+    Checking tokio-rustls v0.24.1
+    Checking hyper-rustls v0.24.2
+    Checking tokio-rustls v0.26.2
+    Checking hyper-rustls v0.27.7
+    Checking aws-smithy-http-client v1.0.6
+    Checking reqwest v0.12.22
+    Checking aws-smithy-runtime v1.8.6
+    Checking semantic_search_client v1.14.0 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/semantic-search-client)
+    Checking jsonschema v0.30.0
+    Checking aws-runtime v1.5.10
+    Checking aws-sdk-sso v1.79.0
+    Checking aws-http v0.60.6
+    Checking aws-sdk-ssooidc v1.80.0
+    Checking aws-sdk-sts v1.81.0
+    Checking amzn-qdeveloper-streaming-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-qdeveloper-streaming-client)
+    Checking amzn-codewhisperer-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-codewhisperer-client)
+    Checking aws-sdk-cognitoidentity v1.80.0
+    Checking amzn-consolas-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-consolas-client)
+    Checking amzn-codewhisperer-streaming-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-codewhisperer-streaming-client)
+    Checking amzn-toolkit-telemetry-client v1.0.0 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-toolkit-telemetry-client)
+    Checking aws-config v1.8.4
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.57s

@@ -1,0 +1,20 @@
+   Compiling hyper-rustls v0.27.7
+   Compiling chat_cli v1.14.0 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/chat-cli)
+   Compiling aws-smithy-http-client v1.0.6
+   Compiling reqwest v0.12.22
+   Compiling aws-smithy-runtime v1.8.6
+   Compiling semantic_search_client v1.14.0 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/semantic-search-client)
+   Compiling jsonschema v0.30.0
+   Compiling aws-runtime v1.5.10
+   Compiling aws-http v0.60.6
+   Compiling aws-sdk-sso v1.79.0
+   Compiling aws-sdk-ssooidc v1.80.0
+   Compiling aws-sdk-sts v1.81.0
+   Compiling amzn-qdeveloper-streaming-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-qdeveloper-streaming-client)
+   Compiling aws-sdk-cognitoidentity v1.80.0
+   Compiling amzn-codewhisperer-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-codewhisperer-client)
+   Compiling amzn-codewhisperer-streaming-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-codewhisperer-streaming-client)
+   Compiling amzn-toolkit-telemetry-client v1.0.0 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-toolkit-telemetry-client)
+   Compiling amzn-consolas-client v0.1.10231 (/Volumes/workplace/QCLI/amazon-q-developer-cli/crates/amzn-consolas-client)
+   Compiling aws-config v1.8.4
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 26.99s

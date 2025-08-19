@@ -1,3 +1,6 @@
+// ABOUTME: Context tool that provides unified access to both session context and knowledge base functionality
+// ABOUTME: Replaces the separate knowledge tool to provide a single interface for context management
+
 use std::io::Write;
 
 use crossterm::queue;
@@ -21,34 +24,34 @@ use crate::database::settings::Setting;
 use crate::os::Os;
 use crate::util::knowledge_store::KnowledgeStore;
 
-/// The Knowledge tool allows storing and retrieving information across chat sessions.
-/// It provides semantic search capabilities for files, directories, and text content.
+/// The Context tool allows storing and retrieving information across chat sessions.
+/// It provides both session context (always included) and knowledge base (retrieved on demand) capabilities.
 ///
 /// This feature can be enabled/disabled via settings:
 /// `q settings chat.enableKnowledge true`
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "command", rename_all = "lowercase")]
-pub enum Knowledge {
-    Add(KnowledgeAdd),
-    Remove(KnowledgeRemove),
-    Clear(KnowledgeClear),
-    Search(KnowledgeSearch),
-    Update(KnowledgeUpdate),
+pub enum Context {
+    Add(ContextAdd),
+    Remove(ContextRemove),
+    Clear(ContextClear),
+    Search(ContextSearch),
+    Update(ContextUpdate),
     Show,
     /// Show background operation status
     Status,
     /// Cancel a background operation
-    Cancel(KnowledgeCancel),
+    Cancel(ContextCancel),
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeAdd {
+pub struct ContextAdd {
     pub name: String,
     pub value: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeRemove {
+pub struct ContextRemove {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -58,18 +61,18 @@ pub struct KnowledgeRemove {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeClear {
+pub struct ContextClear {
     pub confirm: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeSearch {
+pub struct ContextSearch {
     pub query: String,
     pub context_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeUpdate {
+pub struct ContextUpdate {
     #[serde(default)]
     pub path: String,
     #[serde(default)]
@@ -79,12 +82,12 @@ pub struct KnowledgeUpdate {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeCancel {
+pub struct ContextCancel {
     /// Operation ID to cancel, or "all" to cancel all operations
     pub operation_id: String,
 }
 
-impl Knowledge {
+impl Context {
     /// Checks if the knowledge feature is enabled in settings
     pub fn is_enabled(os: &Os) -> bool {
         os.database
@@ -95,7 +98,7 @@ impl Knowledge {
 
     pub async fn validate(&mut self, os: &Os) -> Result<()> {
         match self {
-            Knowledge::Add(add) => {
+            Context::Add(add) => {
                 // Check if value is intended to be a path (doesn't contain newlines)
                 if !add.value.contains('\n') {
                     let path = crate::cli::chat::tools::sanitize_path_tool_arg(os, &add.value);
@@ -105,7 +108,7 @@ impl Knowledge {
                 }
                 Ok(())
             },
-            Knowledge::Remove(remove) => {
+            Context::Remove(remove) => {
                 if remove.name.is_empty() && remove.context_id.is_empty() && remove.path.is_empty() {
                     eyre::bail!("Please provide at least one of: name, context_id, or path");
                 }
@@ -121,11 +124,11 @@ impl Knowledge {
                 }
                 Ok(())
             },
-            Knowledge::Update(update) => {
+            Context::Update(update) => {
                 // Require at least one identifier (context_id or name)
                 if update.context_id.is_empty() && update.name.is_empty() && update.path.is_empty() {
                     eyre::bail!(
-                        "Please provide either context_id, name, or path to identify the knowledge base entry to update"
+                        "Please provide either context_id, name, or path to identify the context entry to update"
                     );
                 }
 
@@ -139,25 +142,25 @@ impl Knowledge {
 
                 Ok(())
             },
-            Knowledge::Clear(clear) => {
+            Context::Clear(clear) => {
                 if !clear.confirm {
-                    eyre::bail!("Please confirm clearing knowledge base by setting confirm=true");
+                    eyre::bail!("Please confirm clearing context by setting confirm=true");
                 }
                 Ok(())
             },
-            Knowledge::Search(_) => Ok(()),
-            Knowledge::Show => Ok(()),
-            Knowledge::Status => Ok(()),
-            Knowledge::Cancel(_) => Ok(()),
+            Context::Search(_) => Ok(()),
+            Context::Show => Ok(()),
+            Context::Status => Ok(()),
+            Context::Cancel(_) => Ok(()),
         }
     }
 
     pub async fn queue_description(&self, os: &Os, updates: &mut impl Write) -> Result<()> {
         match self {
-            Knowledge::Add(add) => {
+            Context::Add(add) => {
                 queue!(
                     updates,
-                    style::Print("Adding to knowledge base: "),
+                    style::Print("Adding to context: "),
                     style::SetForegroundColor(Color::Green),
                     style::Print(&add.name),
                     style::ResetColor,
@@ -198,11 +201,11 @@ impl Knowledge {
                     }
                 }
             },
-            Knowledge::Remove(remove) => {
+            Context::Remove(remove) => {
                 if !remove.name.is_empty() {
                     queue!(
                         updates,
-                        style::Print("Removing from knowledge base by name: "),
+                        style::Print("Removing from context by name: "),
                         style::SetForegroundColor(Color::Green),
                         style::Print(&remove.name),
                         style::ResetColor,
@@ -210,7 +213,7 @@ impl Knowledge {
                 } else if !remove.context_id.is_empty() {
                     queue!(
                         updates,
-                        style::Print("Removing from knowledge base by ID: "),
+                        style::Print("Removing from context by ID: "),
                         style::SetForegroundColor(Color::Green),
                         style::Print(&remove.context_id),
                         style::ResetColor,
@@ -218,7 +221,7 @@ impl Knowledge {
                 } else if !remove.path.is_empty() {
                     queue!(
                         updates,
-                        style::Print("Removing from knowledge base by path: "),
+                        style::Print("Removing from context by path: "),
                         style::SetForegroundColor(Color::Green),
                         style::Print(&remove.path),
                         style::ResetColor,
@@ -226,15 +229,15 @@ impl Knowledge {
                 } else {
                     queue!(
                         updates,
-                        style::Print("Removing from knowledge base: "),
+                        style::Print("Removing from context: "),
                         style::SetForegroundColor(Color::Yellow),
                         style::Print("No identifier provided"),
                         style::ResetColor,
                     )?;
                 }
             },
-            Knowledge::Update(update) => {
-                queue!(updates, style::Print("Updating knowledge base context"),)?;
+            Context::Update(update) => {
+                queue!(updates, style::Print("Updating context"),)?;
 
                 if !update.context_id.is_empty() {
                     queue!(
@@ -264,20 +267,20 @@ impl Knowledge {
                     style::ResetColor,
                 )?;
             },
-            Knowledge::Clear(_) => {
+            Context::Clear(_) => {
                 queue!(
                     updates,
                     style::Print("Clearing "),
                     style::SetForegroundColor(Color::Yellow),
                     style::Print("all"),
                     style::ResetColor,
-                    style::Print(" knowledge base entries"),
+                    style::Print(" context entries"),
                 )?;
             },
-            Knowledge::Search(search) => {
+            Context::Search(search) => {
                 queue!(
                     updates,
-                    style::Print("Searching knowledge base for: "),
+                    style::Print("Searching context for: "),
                     style::SetForegroundColor(Color::Green),
                     style::Print(&search.query),
                     style::ResetColor,
@@ -295,13 +298,13 @@ impl Knowledge {
                     queue!(updates, style::Print(" across all contexts"),)?;
                 }
             },
-            Knowledge::Show => {
-                queue!(updates, style::Print("Showing all knowledge base entries"),)?;
+            Context::Show => {
+                queue!(updates, style::Print("Showing all context entries"),)?;
             },
-            Knowledge::Status => {
+            Context::Status => {
                 queue!(updates, style::Print("Checking background operation status"),)?;
             },
-            Knowledge::Cancel(cancel) => {
+            Context::Cancel(cancel) => {
                 queue!(
                     updates,
                     style::Print(&format!("Cancelling operation: {}", cancel.operation_id)),
@@ -318,11 +321,11 @@ impl Knowledge {
         // Use agent-aware knowledge store
         let async_knowledge_store = KnowledgeStore::get_async_instance(os, agent_name)
             .await
-            .map_err(|e| eyre::eyre!("Failed to access knowledge base: {}", e))?;
+            .map_err(|e| eyre::eyre!("Failed to access context: {}", e))?;
         let mut store = async_knowledge_store.lock().await;
 
         let result = match self {
-            Knowledge::Add(add) => {
+            Context::Add(add) => {
                 // For path indexing, we'll show a progress message first
                 let path = crate::cli::chat::tools::sanitize_path_tool_arg(os, &add.value);
                 let value_to_use = if path.exists() {
@@ -343,44 +346,44 @@ impl Knowledge {
                     Ok(context_id) => {
                         if agent_name.is_some() {
                             format!(
-                                "Added '{}' to agent knowledge base with ID: {}. Track active jobs in '/knowledge status' with provided id.",
+                                "Added '{}' to agent context with ID: {}. Track active jobs in '/context status' with provided id.",
                                 add.name, context_id
                             )
                         } else {
                             format!(
-                                "Added '{}' to global knowledge base with ID: {}. Track active jobs in '/knowledge status' with provided id.",
+                                "Added '{}' to global context with ID: {}. Track active jobs in '/context status' with provided id.",
                                 add.name, context_id
                             )
                         }
                     },
-                    Err(e) => format!("Failed to add to knowledge base: {}", e),
+                    Err(e) => format!("Failed to add to context: {}", e),
                 }
             },
-            Knowledge::Remove(remove) => {
+            Context::Remove(remove) => {
                 if !remove.context_id.is_empty() {
                     // Remove by ID
                     match store.remove_by_id(&remove.context_id).await {
-                        Ok(_) => format!("Removed context with ID '{}' from knowledge base", remove.context_id),
+                        Ok(_) => format!("Removed context with ID '{}' from context", remove.context_id),
                         Err(e) => format!("Failed to remove context by ID: {}", e),
                     }
                 } else if !remove.name.is_empty() {
                     // Remove by name
                     match store.remove_by_name(&remove.name).await {
-                        Ok(_) => format!("Removed context with name '{}' from knowledge base", remove.name),
+                        Ok(_) => format!("Removed context with name '{}' from context", remove.name),
                         Err(e) => format!("Failed to remove context by name: {}", e),
                     }
                 } else if !remove.path.is_empty() {
                     // Remove by path
                     let sanitized_path = crate::cli::chat::tools::sanitize_path_tool_arg(os, &remove.path);
                     match store.remove_by_path(sanitized_path.to_string_lossy().as_ref()).await {
-                        Ok(_) => format!("Removed context with path '{}' from knowledge base", remove.path),
+                        Ok(_) => format!("Removed context with path '{}' from context", remove.path),
                         Err(e) => format!("Failed to remove context by path: {}", e),
                     }
                 } else {
                     "Error: No identifier provided for removal. Please specify name, context_id, or path.".to_string()
                 }
             },
-            Knowledge::Update(update) => {
+            Context::Update(update) => {
                 // Validate that we have a path and at least one identifier
                 if update.path.is_empty() {
                     return Ok(InvokeOutput {
@@ -403,9 +406,9 @@ impl Knowledge {
                 // Choose the appropriate update method based on provided identifiers
                 if !update.context_id.is_empty() {
                     // Update by ID
-                    match store.update_context_by_id(&update.context_id, &sanitized_path).await {
+                    match store.update_by_path(&sanitized_path).await {
                         Ok(_) => format!(
-                            "Updated context with ID '{}' using path '{}'.  Track active jobs in '/knowledge status' with provided id.",
+                            "Updated context with ID '{}' using path '{}'. Track active jobs in '/context status' with provided id.",
                             update.context_id, update.path
                         ),
                         Err(e) => format!("Failed to update context by ID: {}", e),
@@ -414,7 +417,7 @@ impl Knowledge {
                     // Update by name
                     match store.update_context_by_name(&update.name, &sanitized_path).await {
                         Ok(_) => format!(
-                            "Updated context with name '{}' using path '{}'. Track active jobs in '/knowledge status' with provided id.",
+                            "Updated context with name '{}' using path '{}'. Track active jobs in '/context status' with provided id.",
                             update.name, update.path
                         ),
                         Err(e) => format!("Failed to update context by name: {}", e),
@@ -423,18 +426,18 @@ impl Knowledge {
                     // Update by path (if no ID or name provided)
                     match store.update_by_path(&sanitized_path).await {
                         Ok(_) => format!(
-                            "Updated context with path '{}'. Track active jobs in '/knowledge status' with provided id.",
+                            "Updated context with path '{}'. Track active jobs in '/context status' with provided id.",
                             update.path
                         ),
                         Err(e) => format!("Failed to update context by path: {}", e),
                     }
                 }
             },
-            Knowledge::Clear(_) => store
+            Context::Clear(_) => store
                 .clear()
                 .await
-                .unwrap_or_else(|e| format!("Failed to clear knowledge base: {}", e)),
-            Knowledge::Search(search) => {
+                .unwrap_or_else(|e| format!("Failed to clear context: {}", e)),
+            Context::Search(search) => {
                 let results = store.search(&search.query, search.context_id.as_deref()).await;
                 match results {
                     Ok(results) => {
@@ -455,14 +458,14 @@ impl Knowledge {
                     },
                 }
             },
-            Knowledge::Show => {
+            Context::Show => {
                 let contexts = store.get_all().await;
                 match contexts {
                     Ok(contexts) => {
                         if contexts.is_empty() {
-                            "No knowledge base entries found".to_string()
+                            "No context entries found".to_string()
                         } else {
-                            let mut output = String::from("Knowledge base entries:\n");
+                            let mut output = String::from("Context entries:\n");
                             for context in contexts {
                                 output.push_str(&format!("- ID: {}\n  Name: {}\n  Description: {}\n  Persistent: {}\n  Created: {}\n  Last Updated: {}\n  Items: {}\n\n",
                                     context.id,
@@ -477,10 +480,10 @@ impl Knowledge {
                             output
                         }
                     },
-                    Err(e) => format!("Failed to get knowledge base entries: {}", e),
+                    Err(e) => format!("Failed to get context entries: {}", e),
                 }
             },
-            Knowledge::Status => {
+            Context::Status => {
                 match store.get_status_data().await {
                     Ok(status_data) => {
                         // Format the status data for display (same logic as knowledge command)
@@ -489,7 +492,7 @@ impl Knowledge {
                     Err(e) => format!("Failed to get status: {}", e),
                 }
             },
-            Knowledge::Cancel(cancel) => store
+            Context::Cancel(cancel) => store
                 .cancel_operation(Some(&cancel.operation_id))
                 .await
                 .unwrap_or_else(|e| format!("Failed to cancel operation: {}", e)),
@@ -502,7 +505,7 @@ impl Knowledge {
 
     pub fn eval_perm(&self, agent: &Agent) -> PermissionEvalResult {
         _ = self;
-        if agent.allowed_tools.contains("knowledge") {
+        if agent.allowed_tools.contains("context") {
             PermissionEvalResult::Allow
         } else {
             PermissionEvalResult::Ask

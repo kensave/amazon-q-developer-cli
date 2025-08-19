@@ -34,6 +34,19 @@ pub struct AddContextRequest {
     pub exclude_patterns: Option<Vec<String>>,
     /// Optional embedding type override for this context
     pub embedding_type: Option<EmbeddingType>,
+    /// Optional custom ID for the context (if not provided, UUID will be generated)
+    pub id: Option<String>,
+}
+
+/// Request for adding content to an existing context
+#[derive(Debug, Clone)]
+pub struct AddToContextRequest {
+    /// ID of the existing context to add content to
+    pub context_id: String,
+    /// Content to add (either text or file path)
+    pub content: String,
+    /// Optional metadata
+    pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Parameters for indexing operations (internal use)
@@ -104,6 +117,9 @@ pub struct KnowledgeContext {
     /// Number of items in the context
     pub item_count: usize,
 
+    /// Approximate number of tokens in the context
+    pub token_count: usize,
+
     /// Embedding type used for this context
     #[serde(default)]
     pub embedding_type: EmbeddingType,
@@ -120,6 +136,7 @@ impl KnowledgeContext {
         source_path: Option<String>,
         patterns: (Vec<String>, Vec<String>),
         item_count: usize,
+        token_count: usize,
         embedding_type: EmbeddingType,
     ) -> Self {
         let now = Utc::now();
@@ -134,6 +151,7 @@ impl KnowledgeContext {
             exclude_patterns: patterns.1,
             persistent,
             item_count,
+            token_count,
             embedding_type,
         }
     }

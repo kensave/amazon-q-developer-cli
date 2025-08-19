@@ -39,26 +39,16 @@ pub enum KnowledgeSubcommand {
         /// Index type to use (Fast, Best)
         #[arg(long)]
         index_type: Option<String>,
-        /// Add to global knowledge base (shared across all agents)
-        #[arg(long)]
-        global: bool,
     },
     /// Remove specified knowledge base entry by path
     #[command(alias = "rm")]
     Remove { 
         path: String,
-        /// Remove from global knowledge base instead of agent-specific
-        #[arg(long)]
-        global: bool,
     },
     /// Update a file or directory in knowledge base
     Update { path: String },
     /// Remove all knowledge base entries
-    Clear {
-        /// Clear global knowledge instead of agent-specific knowledge
-        #[arg(long)]
-        global: bool,
-    },
+    Clear,
     /// Show background operation status
     Status,
     /// Cancel a background operation
@@ -132,11 +122,10 @@ impl KnowledgeSubcommand {
                 include,
                 exclude,
                 index_type,
-                global,
-            } => Self::handle_add(os, session, path, include, exclude, index_type, *global).await,
-            KnowledgeSubcommand::Remove { path, global } => Self::handle_remove(os, session, path, *global).await,
+            } => Self::handle_add(os, session, path, include, exclude, index_type).await,
+            KnowledgeSubcommand::Remove { path } => Self::handle_remove(os, session, path).await,
             KnowledgeSubcommand::Update { path } => Self::handle_update(os, session, path).await,
-            KnowledgeSubcommand::Clear { global } => Self::handle_clear(os, session, *global).await,
+            KnowledgeSubcommand::Clear => Self::handle_clear(os, session).await,
             KnowledgeSubcommand::Status => Self::handle_status(os, session).await,
             KnowledgeSubcommand::Cancel { operation_id } => Self::handle_cancel(os, session, operation_id.as_deref()).await,
         }
@@ -163,7 +152,11 @@ impl KnowledgeSubcommand {
             match KnowledgeStore::get_async_instance(os, Some(agent)).await {
                 Ok(store) => {
                     let store = store.lock().await;
-                    let entries = store.get_all_for_scope(false).await.unwrap_or_default();
+                    let contexts = store.get_all().await.unwrap_or_default();
+                    let entries: Vec<_> = contexts.into_iter().map(|ctx| crate::util::knowledge_store::KnowledgeEntry {
+                        context: ctx,
+                    }).collect();
+                    
                     if entries.is_empty() {
                         queue!(
                             session.stderr,
@@ -184,40 +177,6 @@ impl KnowledgeSubcommand {
                     )?;
                 },
             }
-        }
-
-        // Show global knowledge
-        queue!(
-            session.stderr,
-            style::SetAttribute(crossterm::style::Attribute::Bold),
-            style::SetForegroundColor(Color::Magenta),
-            style::Print("🌍 Global:\n"),
-            style::SetAttribute(crossterm::style::Attribute::Reset),
-        )?;
-
-        match KnowledgeStore::get_async_instance(os, agent_name.as_deref()).await {
-            Ok(store) => {
-                let store = store.lock().await;
-                let entries = store.get_all_for_scope(true).await.unwrap_or_default();
-                if entries.is_empty() {
-                    queue!(
-                        session.stderr,
-                        style::SetForegroundColor(Color::DarkGrey),
-                        style::Print("    <none>\n\n"),
-                        style::SetForegroundColor(Color::Reset)
-                    )?;
-                } else {
-                    Self::format_knowledge_entries_with_indent(session, &entries, "    ")?;
-                }
-            },
-            Err(_) => {
-                queue!(
-                    session.stderr,
-                    style::SetForegroundColor(Color::DarkGrey),
-                    style::Print("    <none>\n\n"),
-                    style::SetForegroundColor(Color::Reset)
-                )?;
-            },
         }
 
         Ok(())
@@ -294,7 +253,6 @@ impl KnowledgeSubcommand {
         include_patterns: &[String],
         exclude_patterns: &[String],
         index_type: &Option<String>,
-        is_global: bool
     ) -> OperationResult {
         match Self::validate_and_sanitize_path(os, path) {
             Ok(sanitized_path) => {
@@ -334,8 +292,7 @@ impl KnowledgeSubcommand {
                 let options = crate::util::knowledge_store::AddOptions::new()
                     .with_include_patterns(include)
                     .with_exclude_patterns(exclude)
-                    .with_embedding_type(embedding_type_resolved)
-                    .with_is_global(Some(is_global));
+                    .with_embedding_type(embedding_type_resolved);
 
                 match store.add(path, &sanitized_path.clone(), options).await {
                     Ok(message) => OperationResult::Info(message),
@@ -353,7 +310,7 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle remove operation
-    async fn handle_remove(os: &Os, session: &ChatSession, path: &str, global: bool) -> OperationResult {
+    async fn handle_remove(os: &Os, session: &ChatSession, path: &str) -> OperationResult {
         let sanitized_path = sanitize_path_tool_arg(os, path);
         let agent_name = Self::get_agent_name(session);
 
@@ -363,12 +320,12 @@ impl KnowledgeSubcommand {
         };
         let mut store = async_knowledge_store.lock().await;
 
-        let scope_desc = if global { "global" } else { "agent" };
+        let scope_desc = "agent";
 
-        // Try path first, then name using scope-aware methods
-        if store.remove_by_path_scope(&sanitized_path.to_string_lossy(), global).await.is_ok() {
+        // Try path first, then name
+        if store.remove_by_path(&sanitized_path.to_string_lossy()).await.is_ok() {
             OperationResult::Success(format!("Removed {} knowledge base entry with path '{}'", scope_desc, path))
-        } else if store.remove_by_name_scope(path, global).await.is_ok() {
+        } else if store.remove_by_name(path).await.is_ok() {
             OperationResult::Success(format!("Removed {} knowledge base entry with name '{}'", scope_desc, path))
         } else {
             OperationResult::Warning(format!("Entry not found in {} knowledge base: {}", scope_desc, path))
@@ -398,7 +355,7 @@ impl KnowledgeSubcommand {
     }
 
     /// Handle clear operation
-    async fn handle_clear(os: &Os, session: &mut ChatSession, is_global: bool) -> OperationResult {
+    async fn handle_clear(os: &Os, session: &mut ChatSession) -> OperationResult {
         // Require confirmation
         queue!(
             session.stderr,
@@ -444,7 +401,7 @@ impl KnowledgeSubcommand {
             style::Print("🗑️  Clearing all knowledge base entries...\n")
         )
         .unwrap();
-        match store.clear_scope(is_global).await {
+        match store.clear().await {
             Ok(message) => OperationResult::Success(message),
             Err(e) => OperationResult::Error(format!("Failed to clear: {}", e)),
         }

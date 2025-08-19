@@ -122,12 +122,20 @@ impl HookExecutor {
             }
 
             if let Err(err) = &result {
+                let hook_desc = if let Some(tool_name) = &hook.1.tool_name {
+                    format!("tool:{}", tool_name)
+                } else if let Some(command) = &hook.1.command {
+                    command.clone()
+                } else {
+                    "unknown hook".to_string()
+                };
+                
                 queue!(
                     output,
                     style::SetForegroundColor(style::Color::Red),
                     style::Print("✗ "),
                     style::SetForegroundColor(style::Color::Blue),
-                    style::Print(&hook.1.command),
+                    style::Print(&hook_desc),
                     style::ResetColor,
                     style::Print(" failed after "),
                     style::SetForegroundColor(style::Color::Yellow),
@@ -189,8 +197,94 @@ impl HookExecutor {
     ) -> ((HookTrigger, Hook), Result<String>, Duration) {
         let start_time = Instant::now();
 
-        let command = &hook.1.command;
+        let result = if let Some(tool_name) = &hook.1.tool_name {
+            // Execute tool
+            self.execute_tool(tool_name, &hook.1.tool_args, prompt).await
+        } else if let Some(command) = &hook.1.command {
+            // Execute shell command
+            self.execute_command(command, &hook.1, prompt).await
+        } else {
+            Err(eyre!("Hook must have either command or tool_name"))
+        };
 
+        (hook, result, start_time.elapsed())
+    }
+
+    async fn execute_tool(
+        &self,
+        tool_name: &str,
+        tool_args: &Option<serde_json::Value>,
+        prompt: Option<&str>,
+    ) -> Result<String> {
+        // Replace ${USER_PROMPT} in tool_args if prompt is provided
+        let mut substituted_args = tool_args.clone();
+        if let (Some(args), Some(user_prompt)) = (&mut substituted_args, prompt) {
+            if let Some(obj) = args.as_object_mut() {
+                for (_, value) in obj {
+                    if let Some(s) = value.as_str() {
+                        *value = serde_json::Value::String(s.replace("${USER_PROMPT}", user_prompt));
+                    }
+                }
+            }
+        }
+        use crate::cli::chat::tools::Tool;
+        use crate::os::Os;
+        use std::collections::HashMap;
+        
+        // Create OS instance for tool execution
+        let os = Os::new().await?;
+        
+        // Parse tool arguments
+        let default_args = serde_json::Value::Object(serde_json::Map::new());
+        let args = substituted_args.as_ref().unwrap_or(&default_args);
+        
+        // Create tool instance based on name and arguments
+        let tool = match tool_name {
+            "context" => {
+                let context_tool: crate::cli::chat::tools::context::Context = 
+                    serde_json::from_value(args.clone())?;
+                Tool::Context(context_tool)
+            },
+            "fs_read" => {
+                let fs_read_tool: crate::cli::chat::tools::fs_read::FsRead = 
+                    serde_json::from_value(args.clone())?;
+                Tool::FsRead(fs_read_tool)
+            },
+            "fs_write" => {
+                let fs_write_tool: crate::cli::chat::tools::fs_write::FsWrite = 
+                    serde_json::from_value(args.clone())?;
+                Tool::FsWrite(fs_write_tool)
+            },
+            "execute_bash" | "execute_cmd" => {
+                let execute_tool: crate::cli::chat::tools::execute::ExecuteCommand = 
+                    serde_json::from_value(args.clone())?;
+                Tool::ExecuteCommand(execute_tool)
+            },
+            "use_aws" => {
+                let aws_tool: crate::cli::chat::tools::use_aws::UseAws = 
+                    serde_json::from_value(args.clone())?;
+                Tool::UseAws(aws_tool)
+            },
+            _ => return Err(eyre!("Unsupported tool: {}", tool_name)),
+        };
+        
+        // Execute the tool
+        let mut output = Vec::new();
+        let mut line_tracker = HashMap::new();
+        let invoke_result = tool.invoke(&os, &mut output, &mut line_tracker, None).await?;
+        
+        let result = invoke_result.as_str().to_string();
+        
+        // Return the tool result as string
+        Ok(result)
+    }
+
+    async fn execute_command(
+        &self,
+        command: &str,
+        hook: &Hook,
+        prompt: Option<&str>,
+    ) -> Result<String> {
         #[cfg(unix)]
         let mut cmd = tokio::process::Command::new("bash");
         #[cfg(unix)]
@@ -211,7 +305,7 @@ impl HookExecutor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let timeout = Duration::from_millis(hook.1.timeout_ms);
+        let timeout = Duration::from_millis(hook.timeout_ms);
 
         // Set USER_PROMPT environment variable if provided
         if let Some(prompt) = prompt {
@@ -223,14 +317,14 @@ impl HookExecutor {
         let command_future = cmd.output();
 
         // Run with timeout
-        let result = match tokio::time::timeout(timeout, command_future).await {
+        match tokio::time::timeout(timeout, command_future).await {
             Ok(Ok(result)) => {
                 if result.status.success() {
                     let stdout = result.stdout.to_str_lossy();
                     let stdout = format!(
                         "{}{}",
-                        truncate_safe(&stdout, hook.1.max_output_size),
-                        if stdout.len() > hook.1.max_output_size {
+                        truncate_safe(&stdout, hook.max_output_size),
+                        if stdout.len() > hook.max_output_size {
                             " ... truncated"
                         } else {
                             ""
@@ -243,9 +337,7 @@ impl HookExecutor {
             },
             Ok(Err(err)) => Err(eyre!("failed to execute command: {}", err)),
             Err(_) => Err(eyre!("command timed out after {} ms", timeout.as_millis())),
-        };
-
-        (hook, result, start_time.elapsed())
+        }
     }
 
     /// Will return a cached hook's output if it exists and isn't expired.
@@ -303,7 +395,14 @@ impl HooksArgs {
                 true => writeln!(&mut out, "<none>")?,
                 false => {
                     for hook in hooks {
-                        writeln!(&mut out, "  - {}", hook.command)?;
+                        let hook_desc = if let Some(tool_name) = &hook.tool_name {
+                            format!("tool: {}", tool_name)
+                        } else if let Some(command) = &hook.command {
+                            command.clone()
+                        } else {
+                            "unknown hook".to_string()
+                        };
+                        writeln!(&mut out, "  - {}", hook_desc)?;
                     }
                 },
             }

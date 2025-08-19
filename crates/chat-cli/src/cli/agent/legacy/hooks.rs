@@ -76,7 +76,9 @@ impl LegacyHook {
 impl From<LegacyHook> for Option<Hook> {
     fn from(value: LegacyHook) -> Self {
         Some(Hook {
-            command: value.command?,
+            command: Some(value.command?),
+            tool_name: None,
+            tool_args: None,
             timeout_ms: value.timeout_ms,
             max_output_size: value.max_output_size,
             cache_ttl_seconds: value.cache_ttl_seconds,
