@@ -70,6 +70,7 @@ impl ResourceSubcommand {
                         
                         ContextSubcommand::Show { expand }.execute(os, session).await?;
                         
+                        // Context command ends with \n\n, so we don't need extra spacing
                         queue!(
                             session.stderr,
                             style::SetForegroundColor(style::Color::Green),
