@@ -362,11 +362,8 @@ impl Resource {
         })
     }
 
-    pub fn eval_perm(&self, agent: &Agent) -> PermissionEvalResult {
-        if agent.allowed_tools.contains("resource") {
-            PermissionEvalResult::Allow
-        } else {
-            PermissionEvalResult::Deny(vec!["resource tool not allowed".to_string()])
-        }
+    pub fn eval_perm(&self, _agent: &Agent) -> PermissionEvalResult {
+        // Resource tool is a core tool like thinking and gh_issue, always allow
+        PermissionEvalResult::Allow
     }
 }
