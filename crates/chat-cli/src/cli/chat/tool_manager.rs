@@ -77,7 +77,6 @@ use crate::cli::chat::tools::execute::ExecuteCommand;
 use crate::cli::chat::tools::fs_read::FsRead;
 use crate::cli::chat::tools::fs_write::FsWrite;
 use crate::cli::chat::tools::gh_issue::GhIssue;
-use crate::cli::chat::tools::context::Context;
 use crate::cli::chat::tools::resource::Resource;
 use crate::cli::chat::tools::thinking::Thinking;
 use crate::cli::chat::tools::use_aws::UseAws;
@@ -908,8 +907,8 @@ impl ToolManager {
             if !crate::cli::chat::tools::thinking::Thinking::is_enabled(os) {
                 tool_specs.remove("thinking");
             }
-            if !crate::cli::chat::tools::context::Context::is_enabled(os) {
-                tool_specs.remove("context");
+            if !crate::cli::chat::tools::resource::Resource::is_enabled(os) {
+                tool_specs.remove("resource");
             }
 
             #[cfg(windows)]
@@ -1066,7 +1065,6 @@ impl ToolManager {
             "use_aws" => Tool::UseAws(serde_json::from_value::<UseAws>(value.args).map_err(map_err)?),
             "report_issue" => Tool::GhIssue(serde_json::from_value::<GhIssue>(value.args).map_err(map_err)?),
             "thinking" => Tool::Thinking(serde_json::from_value::<Thinking>(value.args).map_err(map_err)?),
-            "context" => Tool::Context(serde_json::from_value::<Context>(value.args).map_err(map_err)?),
             "resource" => Tool::Resource(serde_json::from_value::<Resource>(value.args).map_err(map_err)?),
             // Note that this name is namespaced with server_name{DELIMITER}tool_name
             name => {

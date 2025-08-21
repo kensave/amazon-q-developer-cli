@@ -232,9 +232,9 @@
       ]
     }
   },
-  "context": {
-    "name": "context",
-    "description": "PRIORITY TOOL: Always use this tool first when you need to remember, recall, or retrieve any information from previous conversations. This is your primary memory bank - use it whenever you're unsure about user preferences, past discussions, or need to search for any previously mentioned information. Store and retrieve information in context across chat sessions. Provides semantic search capabilities for files, directories, and text content. When in doubt about what the user has said before, ALWAYS search context first.",
+  "resource": {
+    "name": "resource",
+    "description": "PRIORITY TOOL: Unified resource management for both pinned (always included) and indexed (retrieved on demand) resources. Use this tool to manage context across chat sessions with two storage types: 'pinned' resources are always included in conversations, while 'indexed' resources are retrieved on demand via semantic search. Always use this tool first when you need to remember, recall, or retrieve any information from previous conversations.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -250,27 +250,35 @@
             "status",
             "cancel"
           ],
-          "description": "The context operation to perform:\n- 'show': List all context entries (no additional parameters required)\n- 'add': Add content to context (requires 'name' and 'value')\n- 'remove': Remove content from context (requires one of: 'name', 'context_id', or 'path')\n- 'clear': Remove all context entries.\n- 'search': Search across context entries (requires 'query', optional 'context_id')\n- 'update': Update existing context with new content (requires 'path' and one of: 'name', 'context_id')\n- 'status': Show background operation status and progress\n- 'cancel': Cancel background operations (optional 'operation_id' to cancel specific operation, or cancel all if not provided)"
+          "description": "The resource operation to perform:\n- 'show': List all resource entries (no additional parameters required)\n- 'add': Add content to resources (requires 'name', 'value', and optional 'storage_type')\n- 'remove': Remove content from resources (requires one of: 'name', 'resource_id', or 'path')\n- 'clear': Remove resource entries (optional 'storage_type' to specify which type)\n- 'search': Search across indexed resources (requires 'query', optional 'resource_id')\n- 'update': Update existing resource with new content (requires 'path' and one of: 'name', 'resource_id')\n- 'status': Show background operation status and progress\n- 'cancel': Cancel background operations (optional 'operation_id' to cancel specific operation, or cancel all if not provided)"
         },
         "name": {
           "type": "string",
-          "description": "A descriptive name for the context entry. Required for 'add' operations. Can be used for 'remove' and 'update' operations to identify the context."
+          "description": "A descriptive name for the resource entry. Required for 'add' operations. Can be used for 'remove' and 'update' operations to identify the resource."
         },
         "value": {
           "type": "string",
-          "description": "The content to store in context. Required for 'add' operations. Can be either text content or a file/directory path. If it's a valid file or directory path, the content will be indexed; otherwise it's treated as text."
+          "description": "The content to store as a resource. Required for 'add' operations. Can be either text content or a file/directory path. If it's a valid file or directory path, the content will be indexed; otherwise it's treated as text."
         },
-        "context_id": {
+        "storage_type": {
           "type": "string",
-          "description": "The unique context identifier for targeted operations. Can be obtained from 'show' command. Used for 'remove', 'update', and 'search' operations to specify which context to operate on."
+          "enum": [
+            "pinned",
+            "indexed"
+          ],
+          "description": "Storage type for the resource: 'pinned' (always included in conversations) or 'indexed' (retrieved on demand). Defaults to 'pinned' for 'add' operations. For 'clear' operations, can be 'pinned', 'indexed', or 'all' (default)."
+        },
+        "resource_id": {
+          "type": "string",
+          "description": "The unique resource identifier for targeted operations. Can be obtained from 'show' command. Used for 'remove', 'update', and 'search' operations to specify which resource to operate on."
         },
         "path": {
           "type": "string",
-          "description": "File or directory path. Used in 'remove' operations to remove contexts by their source path, and required for 'update' operations to specify the new content location."
+          "description": "File or directory path. Used in 'remove' operations to remove resources by their source path, and required for 'update' operations to specify the new content location."
         },
         "query": {
           "type": "string",
-          "description": "The search query string. Required for 'search' operations. Performs semantic search across context entries to find relevant content."
+          "description": "The search query string. Required for 'search' operations. Performs semantic search across indexed resources to find relevant content."
         },
         "operation_id": {
           "type": "string",

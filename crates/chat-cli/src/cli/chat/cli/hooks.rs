@@ -240,10 +240,10 @@ impl HookExecutor {
         
         // Create tool instance based on name and arguments
         let tool = match tool_name {
-            "context" => {
-                let context_tool: crate::cli::chat::tools::context::Context = 
+            "resource" => {
+                let resource_tool: crate::cli::chat::tools::resource::Resource = 
                     serde_json::from_value(args.clone())?;
-                Tool::Context(context_tool)
+                Tool::Resource(resource_tool)
             },
             "fs_read" => {
                 let fs_read_tool: crate::cli::chat::tools::fs_read::FsRead = 
