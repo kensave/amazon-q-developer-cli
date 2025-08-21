@@ -72,7 +72,6 @@ impl ResourceSubcommand {
                         
                         queue!(
                             session.stderr,
-                            style::Print("\n"),
                             style::SetForegroundColor(style::Color::Green),
                             style::Print("🔍 Indexed Resources (retrieved on demand):\n"),
                             style::ResetColor
