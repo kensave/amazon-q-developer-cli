@@ -1,4 +1,5 @@
 use clap::{Subcommand, ValueEnum};
+use crossterm::{queue, style};
 use eyre::Result;
 
 use crate::cli::chat::{ChatError, ChatSession, ChatState};
@@ -59,7 +60,24 @@ impl ResourceSubcommand {
                     Some(StorageType::Indexed) => KnowledgeSubcommand::Show.execute(os, session).await,
                     Some(StorageType::Pinned) => ContextSubcommand::Show { expand }.execute(os, session).await,
                     None => {
+                        // Show both with clear separation
+                        queue!(
+                            session.stderr,
+                            style::SetForegroundColor(style::Color::Cyan),
+                            style::Print("📌 Pinned Resources (always included):\n"),
+                            style::ResetColor
+                        )?;
+                        
                         ContextSubcommand::Show { expand }.execute(os, session).await?;
+                        
+                        queue!(
+                            session.stderr,
+                            style::Print("\n"),
+                            style::SetForegroundColor(style::Color::Green),
+                            style::Print("🔍 Indexed Resources (retrieved on demand):\n"),
+                            style::ResetColor
+                        )?;
+                        
                         KnowledgeSubcommand::Show.execute(os, session).await
                     }
                 }
