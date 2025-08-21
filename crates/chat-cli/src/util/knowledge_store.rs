@@ -327,30 +327,9 @@ impl KnowledgeStore {
         Ok(())
     }
 
-    /// Add content to an existing context
-    pub async fn add_to_context(&self, context_id: &str, content: &str) -> Result<()> {
-        self.agent_client.add_to_context(context_id, content).await
-            .map_err(|e| eyre::eyre!("Failed to add content to context: {}", e))
-    }
-
     /// Get all contexts from agent client
     pub async fn get_all(&self) -> Result<Vec<KnowledgeContext>, String> {
         Ok(self.agent_client.get_contexts().await)
-    }
-
-    /// Get all contexts from appropriate client (deprecated - use get_all instead)
-    pub async fn get_all_for_scope(&self, is_global: bool) -> Result<Vec<KnowledgeEntry>, String> {
-        let contexts = if is_global {
-            vec![] // No global client anymore
-        } else {
-            self.agent_client.get_contexts().await
-        };
-
-        let entries = contexts.into_iter().map(|context| KnowledgeEntry {
-            context,
-        }).collect();
-
-        Ok(entries)
     }
 
     /// Add context to specific scope (agent or global)

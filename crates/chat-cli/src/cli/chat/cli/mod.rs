@@ -12,7 +12,6 @@ pub mod prompts;
 pub mod resource;
 pub mod subscribe;
 pub mod tools;
-pub mod unified_context;
 pub mod usage;
 
 use clap::Parser;
