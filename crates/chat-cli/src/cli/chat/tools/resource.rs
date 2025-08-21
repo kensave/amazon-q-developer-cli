@@ -343,11 +343,10 @@ impl Resource {
                         } else {
                             let mut output = format!("Found {} matching indexed resources:\n", results.len());
                             for result in results.iter() {
-                                // Get full content from payload
-                                let content = result.point.payload.get("content")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("No content available");
-                                output.push_str(&format!("- {} (distance: {:.2})\n", content, result.distance));
+                                // Use the same method as the old context tool
+                                if let Some(text) = result.text() {
+                                    output.push_str(&format!("{}\\n\\n", text));
+                                }
                             }
                             output
                         }
