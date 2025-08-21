@@ -342,15 +342,12 @@ impl Resource {
                             "No matching indexed resources found.".to_string()
                         } else {
                             let mut output = format!("Found {} matching indexed resources:\n", results.len());
-                            for result in results.iter().take(20) {
+                            for result in results.iter() {
                                 // Get full content from payload
                                 let content = result.point.payload.get("content")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("No content available");
                                 output.push_str(&format!("- {} (distance: {:.2})\n", content, result.distance));
-                            }
-                            if results.len() > 20 {
-                                output.push_str(&format!("... and {} more results\n", results.len() - 20));
                             }
                             output
                         }
