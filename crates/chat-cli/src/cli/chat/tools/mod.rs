@@ -53,7 +53,7 @@ use crate::cli::agent::{
 use crate::cli::chat::line_tracker::FileLineTracker;
 use crate::os::Os;
 
-pub const DEFAULT_APPROVE: [&str; 1] = ["fs_read"];
+pub const DEFAULT_APPROVE: [&str; 2] = ["fs_read", "resource"];
 pub const NATIVE_TOOLS: [&str; 7] = [
     "fs_read",
     "fs_write",
@@ -63,7 +63,7 @@ pub const NATIVE_TOOLS: [&str; 7] = [
     "execute_bash",
     "use_aws",
     "gh_issue",
-    "context",
+    "resource",
     "thinking",
 ];
 
