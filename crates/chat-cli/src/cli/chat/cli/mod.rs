@@ -9,6 +9,7 @@ pub mod model;
 pub mod persist;
 pub mod profile;
 pub mod prompts;
+pub mod resource;
 pub mod subscribe;
 pub mod tools;
 pub mod unified_context;

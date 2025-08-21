@@ -20,6 +20,7 @@ use super::model::ModelArgs;
 use super::persist::PersistSubcommand;
 use super::prompts::PromptsArgs;
 use super::subscribe::SubscribeArgs;
+use super::resource::ResourceSubcommand;
 use super::tools::ToolsArgs;
 use super::unified_context::UnifiedContextSubcommand;
 use super::usage::UsageArgs;
@@ -44,6 +45,9 @@ pub enum UnifiedSlashCommand {
     /// Manage context files and knowledge base (unified interface)
     #[command(subcommand)]
     Context(UnifiedContextSubcommand),
+    /// Manage resources (pinned and indexed)
+    #[command(subcommand)]
+    Resource(ResourceSubcommand),
     /// (Deprecated) Use /context instead - Legacy knowledge base management
     #[command(subcommand, hide = true)]
     Knowledge(KnowledgeSubcommand),
@@ -102,6 +106,10 @@ impl UnifiedSlashCommand {
                 // Use the new unified context system
                 subcommand.execute(os, session).await
             },
+            Self::Resource(subcommand) => {
+                // Use the new resource system
+                subcommand.execute(os, session).await
+            },
             Self::Knowledge(subcommand) => {
                 // Show deprecation warning and redirect to unified context
                 use crossterm::{queue, style};
@@ -141,6 +149,7 @@ impl UnifiedSlashCommand {
             Self::Agent(_) => "agent",
             Self::Profile => "profile",
             Self::Context(_) => "context",
+            Self::Resource(_) => "resource",
             Self::Knowledge(_) => "knowledge",
             Self::PromptEditor(_) => "editor",
             Self::Compact(_) => "compact",
@@ -159,6 +168,7 @@ impl UnifiedSlashCommand {
     pub fn subcommand_name(&self) -> Option<&'static str> {
         match self {
             Self::Context(subcommand) => Some(subcommand.name()),
+            Self::Resource(subcommand) => Some(subcommand.name()),
             Self::Knowledge(subcommand) => Some(subcommand.name()),
             Self::Agent(subcommand) => Some(subcommand.name()),
             Self::Persist(subcommand) => Some(subcommand.name()),
