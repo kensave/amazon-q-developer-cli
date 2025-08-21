@@ -145,7 +145,7 @@ impl KnowledgeSubcommand {
                 session.stderr,
                 style::SetAttribute(crossterm::style::Attribute::Bold),
                 style::SetForegroundColor(Color::Magenta),
-                style::Print(format!("👤 Agent ({}):\n", agent)),
+                style::Print(format!("  👤 Agent ({}):\n", agent)),
                 style::SetAttribute(crossterm::style::Attribute::Reset),
             )?;
 
@@ -165,7 +165,7 @@ impl KnowledgeSubcommand {
                             style::SetForegroundColor(Color::Reset)
                         )?;
                     } else {
-                        Self::format_knowledge_entries_with_indent(session, &entries, "    ")?;
+                        Self::format_knowledge_entries_with_indent(session, &entries, "        ")?;
                     }
                 },
                 Err(_) => {
