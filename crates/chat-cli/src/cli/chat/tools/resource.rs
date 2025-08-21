@@ -300,7 +300,7 @@ impl Resource {
     }
 
     pub async fn invoke(&self, os: &Os, _updates: &mut impl Write, agent: Option<&crate::cli::agent::Agent>) -> Result<InvokeOutput> {
-        // Get agent name from the agent parameter
+        // Use the same agent name logic as the slash command
         let agent_name = agent.map(|a| a.name.as_str());
 
         // For indexed resources, we use the knowledge store
@@ -342,15 +342,15 @@ impl Resource {
                             "No matching indexed resources found.".to_string()
                         } else {
                             let mut output = format!("Found {} matching indexed resources:\n", results.len());
-                            for result in results.iter().take(5) {
+                            for result in results.iter().take(20) {
                                 // Get full content from payload
                                 let content = result.point.payload.get("content")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("No content available");
                                 output.push_str(&format!("- {} (distance: {:.2})\n", content, result.distance));
                             }
-                            if results.len() > 5 {
-                                output.push_str(&format!("... and {} more results\n", results.len() - 5));
+                            if results.len() > 20 {
+                                output.push_str(&format!("... and {} more results\n", results.len() - 20));
                             }
                             output
                         }
