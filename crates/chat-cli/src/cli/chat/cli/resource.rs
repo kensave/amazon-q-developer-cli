@@ -4,7 +4,7 @@ use eyre::Result;
 use crate::cli::chat::{ChatError, ChatSession, ChatState};
 use crate::os::Os;
 
-use super::context::ContextSubcommand as OriginalContextSubcommand;
+use super::context::ContextSubcommand;
 use super::knowledge::KnowledgeSubcommand;
 
 #[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -57,9 +57,9 @@ impl ResourceSubcommand {
             Self::Show { expand, r#type } => {
                 match r#type {
                     Some(StorageType::Indexed) => KnowledgeSubcommand::Show.execute(os, session).await,
-                    Some(StorageType::Pinned) => OriginalContextSubcommand::Show { expand }.execute(os, session).await,
+                    Some(StorageType::Pinned) => ContextSubcommand::Show { expand }.execute(os, session).await,
                     None => {
-                        OriginalContextSubcommand::Show { expand }.execute(os, session).await?;
+                        ContextSubcommand::Show { expand }.execute(os, session).await?;
                         KnowledgeSubcommand::Show.execute(os, session).await
                     }
                 }
@@ -75,12 +75,12 @@ impl ResourceSubcommand {
                         }.execute(os, session).await
                     },
                     StorageType::Pinned => {
-                        OriginalContextSubcommand::Add { paths, force }.execute(os, session).await
+                        ContextSubcommand::Add { paths, force }.execute(os, session).await
                     },
                 }
             },
             Self::Remove { paths } => {
-                let _ = OriginalContextSubcommand::Remove { paths: paths.clone() }.execute(os, session).await;
+                let _ = ContextSubcommand::Remove { paths: paths.clone() }.execute(os, session).await;
                 // Remove first path from knowledge (knowledge only supports single path)
                 if let Some(first_path) = paths.first() {
                     KnowledgeSubcommand::Remove { path: first_path.clone() }.execute(os, session).await
@@ -91,9 +91,9 @@ impl ResourceSubcommand {
             Self::Clear { r#type } => {
                 match r#type {
                     Some(StorageType::Indexed) => KnowledgeSubcommand::Clear.execute(os, session).await,
-                    Some(StorageType::Pinned) => OriginalContextSubcommand::Clear.execute(os, session).await,
+                    Some(StorageType::Pinned) => ContextSubcommand::Clear.execute(os, session).await,
                     None => {
-                        OriginalContextSubcommand::Clear.execute(os, session).await?;
+                        ContextSubcommand::Clear.execute(os, session).await?;
                         KnowledgeSubcommand::Clear.execute(os, session).await
                     }
                 }

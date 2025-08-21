@@ -18,6 +18,7 @@ pub mod usage;
 use clap::Parser;
 use clear::ClearArgs;
 use compact::CompactArgs;
+use context::ContextSubcommand;
 use editor::EditorArgs;
 use hooks::HooksArgs;
 use knowledge::KnowledgeSubcommand;
@@ -26,8 +27,8 @@ use model::ModelArgs;
 use persist::PersistSubcommand;
 use profile::AgentSubcommand;
 use prompts::PromptsArgs;
+use resource::ResourceSubcommand;
 use tools::ToolsArgs;
-use unified_context::UnifiedContextSubcommand;
 
 use crate::cli::chat::cli::subscribe::SubscribeArgs;
 use crate::cli::chat::cli::usage::UsageArgs;
@@ -55,9 +56,12 @@ pub enum SlashCommand {
     Agent(AgentSubcommand),
     #[command(hide = true)]
     Profile,
-    /// Manage context files and knowledge base for the chat session
+    /// Manage context files for the chat session (original functionality)
     #[command(subcommand)]
-    Context(UnifiedContextSubcommand),
+    Context(ContextSubcommand),
+    /// Manage resources (pinned and indexed)
+    #[command(subcommand)]
+    Resource(ResourceSubcommand),
     /// (Deprecated) Use /context instead. Manage knowledge base for persistent context storage.
     #[command(subcommand, hide = true)]
     Knowledge(KnowledgeSubcommand),
@@ -118,6 +122,7 @@ impl SlashCommand {
                 })
             },
             Self::Context(args) => args.execute(os, session).await,
+            Self::Resource(subcommand) => subcommand.execute(os, session).await,
             Self::Knowledge(subcommand) => {
                 use crossterm::{
                     execute,
@@ -128,7 +133,7 @@ impl SlashCommand {
                     style::SetForegroundColor(style::Color::Yellow),
                     style::Print("The /knowledge command is deprecated. Use"),
                     style::SetForegroundColor(style::Color::Cyan),
-                    style::Print(" /context --knowledge "),
+                    style::Print(" /resource --type indexed "),
                     style::SetForegroundColor(style::Color::Yellow),
                     style::Print("instead.\n"),
                     style::ResetColor,
@@ -174,6 +179,7 @@ impl SlashCommand {
             Self::Agent(_) => "agent",
             Self::Profile => "profile",
             Self::Context(_) => "context",
+            Self::Resource(_) => "resource",
             Self::Knowledge(_) => "knowledge",
             Self::PromptEditor(_) => "editor",
             Self::Compact(_) => "compact",
@@ -195,7 +201,7 @@ impl SlashCommand {
     pub fn subcommand_name(&self) -> Option<&'static str> {
         match self {
             SlashCommand::Agent(sub) => Some(sub.name()),
-            SlashCommand::Context(sub) => Some(sub.name()),
+            SlashCommand::Resource(sub) => Some(sub.name()),
             SlashCommand::Knowledge(sub) => Some(sub.name()),
             SlashCommand::Tools(arg) => arg.subcommand_name(),
             SlashCommand::Prompts(arg) => arg.subcommand_name(),

@@ -10,7 +10,7 @@ use crate::os::Os;
 use super::agent::AgentSubcommand;
 use super::clear::ClearArgs;
 use super::compact::CompactArgs;
-use super::context::ContextSubcommand as OriginalContextSubcommand;
+use super::context::ContextSubcommand;
 use super::editor::EditorArgs;
 use super::hooks::HooksArgs;
 use super::issue;
@@ -42,9 +42,9 @@ pub enum UnifiedSlashCommand {
     Agent(AgentSubcommand),
     #[command(hide = true)]
     Profile,
-    /// Manage context files and knowledge base (unified interface)
+    /// Manage context files (original functionality)
     #[command(subcommand)]
-    Context(UnifiedContextSubcommand),
+    Context(ContextSubcommand),
     /// Manage resources (pinned and indexed)
     #[command(subcommand)]
     Resource(ResourceSubcommand),
@@ -103,7 +103,7 @@ impl UnifiedSlashCommand {
                 })
             },
             Self::Context(subcommand) => {
-                // Use the new unified context system
+                // Use original context system
                 subcommand.execute(os, session).await
             },
             Self::Resource(subcommand) => {
