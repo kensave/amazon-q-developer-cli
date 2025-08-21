@@ -343,12 +343,11 @@ impl Resource {
                         } else {
                             let mut output = format!("Found {} matching indexed resources:\n", results.len());
                             for result in results.iter().take(5) {
-                                // Try to get content from payload
+                                // Get full content from payload
                                 let content = result.point.payload.get("content")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("No content available");
-                                let preview = content.chars().take(100).collect::<String>();
-                                output.push_str(&format!("- {} (distance: {:.2})\n", preview, result.distance));
+                                output.push_str(&format!("- {} (distance: {:.2})\n", content, result.distance));
                             }
                             if results.len() > 5 {
                                 output.push_str(&format!("... and {} more results\n", results.len() - 5));
