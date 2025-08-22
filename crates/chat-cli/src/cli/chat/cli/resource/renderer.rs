@@ -11,7 +11,7 @@ pub trait ResourceRenderer {
     /// Render to session with colors and styling (for CLI renderers)
     fn render_with_session(&self, data: &ResourceData, _: &mut ChatSession) -> Result<(), std::io::Error> {
         // Default implementation just prints the rendered string
-        let output = self.render(data, OutputFormat::Table);
+        let output = self.render(data, OutputFormat::PlainText);
         println!("{}", output);
         Ok(())
     }
@@ -22,7 +22,6 @@ pub struct CliRenderer;
 
 impl ResourceRenderer for CliRenderer {
     fn render(&self, data: &ResourceData, _format: OutputFormat) -> String {
-        // Fallback string rendering for when we can't use session.stderr
         match data {
             ResourceData::Success(msg) => msg.clone(),
             ResourceData::PinnedResources(pinned_data) => {
@@ -129,7 +128,7 @@ impl CliRenderer {
                     style::Print(format!("({} match{})", path.match_count, if path.match_count == 1 { "" } else { "es" })),
                     style::SetForegroundColor(Color::Reset)
                 )?;
-                
+
                 // Only show tokens if there are matches
                 if path.match_count > 0 {
                     let tokens: usize = data.matched_files
@@ -137,7 +136,7 @@ impl CliRenderer {
                         .filter(|f| !f.is_temporary && f.filename.contains(&path.path))
                         .map(|f| f.tokens)
                         .sum();
-                    
+
                     execute!(
                         session.stderr,
                         style::SetForegroundColor(Color::DarkGrey),
@@ -145,7 +144,7 @@ impl CliRenderer {
                         style::SetForegroundColor(Color::Reset)
                     )?;
                 }
-                
+
                 execute!(session.stderr, style::Print("\n"))?;
             }
             execute!(session.stderr, style::Print("\n"))?;
@@ -177,7 +176,7 @@ impl CliRenderer {
                     style::Print(format!("({} match{})", path.match_count, if path.match_count == 1 { "" } else { "es" })),
                     style::SetForegroundColor(Color::Reset)
                 )?;
-                
+
                 // Only show tokens if there are matches
                 if path.match_count > 0 {
                     let tokens: usize = data.matched_files
@@ -185,7 +184,7 @@ impl CliRenderer {
                         .filter(|f| f.is_temporary && f.filename.contains(&path.path))
                         .map(|f| f.tokens)
                         .sum();
-                    
+
                     execute!(
                         session.stderr,
                         style::SetForegroundColor(Color::DarkGrey),
@@ -193,7 +192,7 @@ impl CliRenderer {
                         style::SetForegroundColor(Color::Reset)
                     )?;
                 }
-                
+
                 execute!(session.stderr, style::Print("\n"))?;
             }
             execute!(session.stderr, style::Print("\n"))?;
@@ -205,6 +204,43 @@ impl CliRenderer {
                 session.stderr,
                 style::Print(format!("Total: ~{} tokens\n\n", data.total_tokens))
             )?;
+        }
+
+        // Show dropped files warning if any
+        if let Some(dropped_files) = &data.dropped_files {
+            if !dropped_files.is_empty() {
+                execute!(
+                    session.stderr,
+                    style::SetForegroundColor(Color::DarkYellow),
+                    style::Print(format!(
+                        "Total token count exceeds limit: {}. The following files will be automatically dropped when interacting with Q. Consider removing them.\n\n",
+                        data.context_files_max_size
+                    )),
+                    style::SetForegroundColor(Color::Reset)
+                )?;
+                
+                let total_files = dropped_files.len();
+                let truncated_dropped_files = &dropped_files[..std::cmp::min(10, total_files)];
+
+                for (filename, content) in truncated_dropped_files {
+                    let est_tokens = crate::cli::chat::token_counter::TokenCounter::count_tokens(content);
+                    execute!(
+                        session.stderr,
+                        style::Print(format!("{} ", filename)),
+                        style::SetForegroundColor(Color::DarkGrey),
+                        style::Print(format!("(~{} tkns)\n", est_tokens)),
+                        style::SetForegroundColor(Color::Reset)
+                    )?;
+                }
+
+                if total_files > 10 {
+                    execute!(
+                        session.stderr,
+                        style::Print(format!("({} more files)\n", total_files - 10))
+                    )?;
+                }
+                execute!(session.stderr, style::Print("\n"))?;
+            }
         }
 
         Ok(())

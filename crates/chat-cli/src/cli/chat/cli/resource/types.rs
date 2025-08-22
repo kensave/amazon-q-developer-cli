@@ -1,9 +1,70 @@
 use serde::{Deserialize, Serialize};
+use clap::ValueEnum;
+use std::fmt;
+use std::str::FromStr;
+
+#[derive(Debug, Clone, PartialEq, ValueEnum)]
+pub enum StorageType {
+    Pinned,
+    Indexed,
+    All,
+}
+
+impl fmt::Display for StorageType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for StorageType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pinned" => Ok(StorageType::Pinned),
+            "indexed" => Ok(StorageType::Indexed),
+            "all" => Ok(StorageType::All),
+            _ => Err(format!("Invalid storage type: {}", s))
+        }
+    }
+}
+
+impl StorageType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StorageType::Pinned => "pinned",
+            StorageType::Indexed => "indexed",
+            StorageType::All => "all"
+        }
+    }
+
+    pub fn from_str_option(s: &str) -> Option<Self> {
+        match s {
+            "pinned" => Some(StorageType::Pinned),
+            "indexed" => Some(StorageType::Indexed),
+            "all" => Some(StorageType::All),
+            _ => None
+        }
+    }
+}
+
+impl Default for StorageType {
+    fn default() -> Self {
+        StorageType::Pinned
+    }
+}
 
 /// Core resource operation types
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResourceOperation {
-    Add { name: String, value: String },
+    Add { 
+        name: String, 
+        value: String,
+        include_patterns: Option<Vec<String>>,
+        exclude_patterns: Option<Vec<String>>,
+        index_type: Option<String>,
+    },
+    Update { path: String },
     Remove { id: Option<String>, name: Option<String>, path: Option<String> },
     Show { expand: bool },
     Search { query: String, context_id: Option<String> },
@@ -98,11 +159,11 @@ pub struct StorageInfo {
 /// Output format options
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OutputFormat {
-    Table,
+    PlainText
 }
 
 impl Default for OutputFormat {
     fn default() -> Self {
-        Self::Table
+        Self::PlainText
     }
 }

@@ -8,32 +8,49 @@ use super::types::{ResourceOperation, ResourceData};
 pub trait ResourceManager {
     /// Execute a resource operation and return the result
     async fn execute(&mut self, operation: ResourceOperation) -> Result<ResourceData>;
-    
+
     /// Get the display name for this resource manager
     fn name(&self) -> &'static str;
-    
+
     /// Check if this manager supports a specific operation
     fn supports_operation(&self, operation: &ResourceOperation) -> bool;
 }
 
-/// Simple composition struct that combines manager and renderer
-pub struct ResourceHandler<M: ResourceManager, R: super::ResourceRenderer> {
-    manager: M,
-    renderer: R,
+#[async_trait]
+impl ResourceManager for Box<dyn ResourceManager + Send> {
+    async fn execute(&mut self, operation: ResourceOperation) -> Result<ResourceData> {
+        (**self).execute(operation).await
+    }
+
+    fn name(&self) -> &'static str {
+        (**self).name()
+    }
+
+    fn supports_operation(&self, operation: &ResourceOperation) -> bool {
+        (**self).supports_operation(operation)
+    }
 }
 
-impl<M: ResourceManager, R: super::ResourceRenderer> ResourceHandler<M, R> {
-    pub fn new(manager: M, renderer: R) -> Self {
-        Self { manager, renderer }
+/// Simple composition struct that executes operations
+pub struct ResourceHandler<M: ResourceManager> {
+    manager: M,
+}
+
+impl<M: ResourceManager> ResourceHandler<M> {
+    pub fn new(manager: M) -> Self {
+        Self { manager }
     }
-    
-    /// Handle an operation with the specified output format
+
+    /// Execute an operation and return raw data
     pub async fn handle(
-        &mut self, 
-        operation: ResourceOperation, 
-        format: super::OutputFormat
-    ) -> Result<String> {
-        let data = self.manager.execute(operation).await?;
-        Ok(self.renderer.render(&data, format))
+        &mut self,
+        operation: ResourceOperation
+    ) -> Result<super::ResourceData> {
+        self.manager.execute(operation).await
+    }
+
+    /// Check if this handler supports a specific operation
+    pub fn supports_operation(&self, operation: &ResourceOperation) -> bool {
+        self.manager.supports_operation(operation)
     }
 }

@@ -1,15 +1,12 @@
 use clap::Subcommand;
 use eyre::Result;
-
 use crate::cli::chat::{ChatError, ChatSession, ChatState};
-use crate::cli::chat::token_counter::TokenCounter;
-use crate::cli::chat::context::{calc_max_context_files_size, ContextFilePath};
-use crate::cli::chat::util::drop_matched_context_files;
+use crate::cli::chat::cli::resource::{ResourceData, StorageType};
 use crate::os::Os;
 use super::types::ResourceOperation;
 use super::managers::{ContextResourceManager, KnowledgeResourceManager};
 use super::renderer::{CliRenderer, ResourceRenderer};
-use super::manager::{ResourceHandler, ResourceManager};
+use super::manager::ResourceHandler;
 
 /// Unified resource management system
 #[derive(Debug, PartialEq, Subcommand)]
@@ -22,7 +19,16 @@ pub enum ResourceNewCommand {
         value: String,
         /// Storage type: "pinned" (session-scoped) or "indexed" (persistent, searchable)
         #[arg(long, default_value = "indexed")]
-        r#type: String,
+        r#type: StorageType,
+        /// Include patterns (e.g., `**/*.ts`, `**/*.md`) - only for indexed storage
+        #[arg(long, action = clap::ArgAction::Append)]
+        include: Vec<String>,
+        /// Exclude patterns (e.g., `node_modules/**`, `target/**`) - only for indexed storage
+        #[arg(long, action = clap::ArgAction::Append)]
+        exclude: Vec<String>,
+        /// Index type to use (Fast, Best) - only for indexed storage
+        #[arg(long)]
+        index_type: Option<String>,
     },
     /// Remove content from resources
     Remove {
@@ -37,7 +43,7 @@ pub enum ResourceNewCommand {
         path: Option<String>,
         /// Storage type to remove from: "pinned", "indexed", or "all"
         #[arg(long, default_value = "all")]
-        r#type: String,
+        r#type: StorageType,
     },
     /// Show all resources
     Show {
@@ -46,10 +52,16 @@ pub enum ResourceNewCommand {
         expand: bool,
         /// Storage type to show: "pinned", "indexed", or "all"
         #[arg(long, default_value = "all")]
-        r#type: String,
+        r#type: StorageType,
     },
-    /// Show background operation status
-    Status,
+    /// Update a resource by path (re-index for indexed storage)
+    Update {
+        /// Path to update
+        path: String,
+        /// Storage type: "pinned" or "indexed"
+        #[arg(long, default_value = "indexed")]
+        r#type: StorageType,
+    },
     /// Clear resources
     Clear {
         /// Confirm the clear operation
@@ -57,7 +69,7 @@ pub enum ResourceNewCommand {
         confirm: bool,
         /// Storage type to clear: "pinned", "indexed", or "all"
         #[arg(long, default_value = "all")]
-        r#type: String,
+        r#type: StorageType,
     },
     /// Cancel background operation
     Cancel {
@@ -69,8 +81,8 @@ pub enum ResourceNewCommand {
 impl ResourceNewCommand {
     pub async fn execute(self, os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         match self {
-            Self::Add { name, value, r#type } => {
-                handle_add(os, session, name, value, r#type).await
+            Self::Add { name, value, r#type, include, exclude, index_type } => {
+                handle_add(os, session, name, value, r#type, include, exclude, index_type).await
             }
             Self::Remove { id, name, path, r#type } => {
                 handle_remove(os, session, id, name, path, r#type).await
@@ -78,8 +90,8 @@ impl ResourceNewCommand {
             Self::Show { expand, r#type } => {
                 handle_show(os, session, expand, r#type).await
             }
-            Self::Status => {
-                handle_status(os, session).await
+            Self::Update { path, r#type } => {
+                handle_update(os, session, path, r#type).await
             }
             Self::Clear { confirm, r#type } => {
                 handle_clear(os, session, confirm, r#type).await
@@ -91,375 +103,227 @@ impl ResourceNewCommand {
     }
 }
 
-async fn handle_add(os: &Os, session: &mut ChatSession, name: String, value: String, storage_type: String) -> Result<ChatState, ChatError> {
-        match storage_type.as_str() {
-            "pinned" => {
-                // Use context manager for pinned resources
-                let Some(context_manager) = &mut session.conversation.context_manager else {
-                    eprintln!("No context manager available");
-                    return Ok(ChatState::PromptUser { skip_printing_tools: true });
-                };
-                
-                let mut handler = ResourceHandler::new(
-                    ContextResourceManager::new(context_manager, os),
-                    CliRenderer::new()
-                );
-                
-                let resource_op = ResourceOperation::Add { name, value };
-                match handler.handle(resource_op, super::OutputFormat::Table).await {
-                    Ok(_) => {
-                        // Use CliRenderer to render directly to session.stderr with colors
-                        let renderer = CliRenderer::new();
-                        let success_data = super::ResourceData::Success("Added to pinned resources".to_string());
-                        renderer.render_with_session(&success_data, session)?;
-                    },
-                    Err(e) => {
-                        let renderer = CliRenderer::new();
-                        let error_data = super::ResourceData::Success(format!("Error: {}", e));
-                        renderer.render_with_session(&error_data, session)?;
-                    },
-                }
-            }
-            "indexed" => {
-                // Use knowledge manager for indexed resources
-                let agent = session.conversation.agents.get_active();
-                let knowledge_manager = match KnowledgeResourceManager::new(os, agent).await {
-                    Ok(manager) => manager,
-                    Err(e) => {
-                        eprintln!("Failed to initialize knowledge manager: {}", e);
-                        return Ok(ChatState::PromptUser { skip_printing_tools: true });
-                    }
-                };
-                
-                let mut handler = ResourceHandler::new(
-                    knowledge_manager,
-                    CliRenderer::new()
-                );
-                
-                let resource_op = ResourceOperation::Add { name, value };
-                match handler.handle(resource_op, super::OutputFormat::Table).await {
-                    Ok(output) => println!("{}", output),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
-            _ => {
-                eprintln!("Invalid storage type '{}'. Use 'pinned' or 'indexed'", storage_type);
-            }
-        }
-        
-        Ok(ChatState::PromptUser { skip_printing_tools: true })
-    }
-
-async fn handle_remove(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: String) -> Result<ChatState, ChatError> {
-        match storage_type.as_str() {
-            "pinned" => {
-                let Some(context_manager) = &mut session.conversation.context_manager else {
-                    eprintln!("No context manager available");
-                    return Ok(ChatState::PromptUser { skip_printing_tools: true });
-                };
-                
-                let mut handler = ResourceHandler::new(
-                    ContextResourceManager::new(context_manager, os),
-                    CliRenderer::new()
-                );
-                
-                let resource_op = ResourceOperation::Remove { id, name, path };
-                match handler.handle(resource_op, super::OutputFormat::Table).await {
-                    Ok(output) => println!("{}", output),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
-            "indexed" => {
-                let agent = session.conversation.agents.get_active();
-                let knowledge_manager = match KnowledgeResourceManager::new(os, agent).await {
-                    Ok(manager) => manager,
-                    Err(e) => {
-                        eprintln!("Failed to initialize knowledge manager: {}", e);
-                        return Ok(ChatState::PromptUser { skip_printing_tools: true });
-                    }
-                };
-                
-                let mut handler = ResourceHandler::new(
-                    knowledge_manager,
-                    CliRenderer::new()
-                );
-                
-                let resource_op = ResourceOperation::Remove { id, name, path };
-                match handler.handle(resource_op, super::OutputFormat::Table).await {
-                    Ok(output) => println!("{}", output),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
-            "all" => {
-                // Try both storage types
-                println!("Removing from both pinned and indexed resources...");
-                Box::pin(handle_remove(os, session, id.clone(), name.clone(), path.clone(), "pinned".to_string())).await?;
-                Box::pin(handle_remove(os, session, id, name, path, "indexed".to_string())).await?;
-            }
-            _ => {
-                eprintln!("Invalid storage type '{}'. Use 'pinned', 'indexed', or 'all'", storage_type);
-            }
-        }
-        
-        Ok(ChatState::PromptUser { skip_printing_tools: true })
-    }
-
-async fn handle_search(os: &Os, session: &mut ChatSession, query: String, context_id: Option<String>, storage_type: String) -> Result<ChatState, ChatError> {
-        match storage_type.as_str() {
-            "indexed" | "all" => {
-                // Only indexed resources support search
-                let agent = session.conversation.agents.get_active();
-                let knowledge_manager = match KnowledgeResourceManager::new(os, agent).await {
-                    Ok(manager) => manager,
-                    Err(e) => {
-                        eprintln!("Failed to initialize knowledge manager: {}", e);
-                        return Ok(ChatState::PromptUser { skip_printing_tools: true });
-                    }
-                };
-                
-                let mut handler = ResourceHandler::new(
-                    knowledge_manager,
-                    CliRenderer::new()
-                );
-                
-                let resource_op = ResourceOperation::Search { query, context_id };
-                match handler.handle(resource_op, super::OutputFormat::Table).await {
-                    Ok(output) => println!("{}", output),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
-            "pinned" => {
-                eprintln!("Search is not supported for pinned resources. Use 'indexed' or 'all'");
-            }
-            _ => {
-                eprintln!("Invalid storage type '{}'. Use 'indexed' or 'all' for search", storage_type);
-            }
-        }
-        
-        Ok(ChatState::PromptUser { skip_printing_tools: true })
-    }
-
-async fn handle_show(os: &Os, session: &mut ChatSession, expand: bool, storage_type: String) -> Result<ChatState, ChatError> {
-    let renderer = CliRenderer::new();
+async fn handle_add(
+    os: &Os, 
+    session: &mut ChatSession, 
+    name: String, 
+    value: String, 
+    storage_type: StorageType,
+    include: Vec<String>,
+    exclude: Vec<String>,
+    index_type: Option<String>
+) -> Result<ChatState, ChatError> {
+    validate_add_inputs(session, &storage_type, &include, &exclude, &index_type)?;
     
-    match storage_type.as_str() {
-        "pinned" => {
-            handle_show_pinned(os, session, &renderer).await?;
-        }
-        "indexed" => {
-            handle_show_indexed(os, session, expand, &renderer).await?;
-        }
-        "all" => {
-            Box::pin(handle_show(os, session, expand, "pinned".to_string())).await?;
-            Box::pin(handle_show(os, session, expand, "indexed".to_string())).await?;
-        }
-        _ => {
-            let error_data = super::ResourceData::Success(format!("Invalid storage type '{}'. Use 'pinned', 'indexed', or 'all'", storage_type));
-            renderer.render_with_session(&error_data, session)?;
-        }
-    }
+    let mut handler = get_handler(os, session, storage_type).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    
+    let operation = ResourceOperation::Add { 
+        name, 
+        value, 
+        include_patterns: (!include.is_empty()).then_some(include),
+        exclude_patterns: (!exclude.is_empty()).then_some(exclude),
+        index_type 
+    };
+    
+    let data = handler.handle(operation).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    
+    let renderer = CliRenderer::new();
+    renderer.render_with_session(&data, session)?;
     
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
 
-async fn handle_show_pinned(os: &Os, session: &mut ChatSession, renderer: &CliRenderer) -> Result<(), ChatError> {
-    let Some(context_manager) = &mut session.conversation.context_manager else {
-        let error_data = super::ResourceData::Success("No context manager available".to_string());
-        renderer.render_with_session(&error_data, session)?;
-        return Ok(());
-    };
-    let mut profile_context_files = std::collections::HashSet::<(String, String, bool)>::new();
-    let (agent_owned_list, session_owned_list) = context_manager
-        .paths
-        .iter()
-        .partition::<Vec<_>, _>(|p| matches!(**p, ContextFilePath::Agent(_)));
-    let mut agent_files = Vec::new();
-    for path in &agent_owned_list {
-        let context_files = context_manager
-            .get_context_files_by_path(os, path.get_path_as_str())
-            .await
-            .unwrap_or_default();
-    
-        agent_files.push(super::ContextPath {
-            path: path.get_path_as_str().to_string(),
-            match_count: context_files.len(),
-        });
-    
-        if !context_files.is_empty() {
-            profile_context_files
-                .extend(context_files.into_iter().map(|(path, content)| (path, content, false)));
+async fn handle_update(os: &Os, session: &mut ChatSession, path: String, storage_type: StorageType) -> Result<ChatState, ChatError> {
+    let mut handler = get_handler(os, session, storage_type).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    let operation = ResourceOperation::Update { path };
+
+    let data = handler.handle(operation).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+
+    let renderer = CliRenderer::new();
+    renderer.render_with_session(&data, session)?;
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+    session: &mut ChatSession,
+    storage_type: &StorageType,
+    include: &[String],
+    exclude: &[String],
+    index_type: &Option<String>
+) -> Result<(), ChatError> {
+    if *storage_type == StorageType::Pinned && (!include.is_empty() || !exclude.is_empty() || index_type.is_some()) {
+        let renderer = CliRenderer::new();
+        let warning_data = super::ResourceData::Success(
+            "Warning: include/exclude patterns and index-type are ignored for pinned resources".to_string()
+        );
+        renderer.render_with_session(&warning_data, session)?;
+    }
+    Ok(())
+}
+
+async fn handle_remove(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<ChatState, ChatError> {
+    match storage_type {
+        StorageType::All => {
+            handle_remove_by_type(os, session, id.clone(), name.clone(), path.clone(), StorageType::Pinned).await?;
+            handle_remove_by_type(os, session, id, name, path, StorageType::Indexed).await?;
+        }
+        _ => {
+            handle_remove_by_type(os, session, id, name, path, storage_type).await?;
         }
     }
-    let mut session_files = Vec::new();
-    for path in &session_owned_list {
-        let context_files = context_manager
-            .get_context_files_by_path(os, path.get_path_as_str())
-            .await
-            .unwrap_or_default();
-    
-        session_files.push(super::ContextPath {
-            path: path.get_path_as_str().to_string(),
-            match_count: context_files.len(),
-        });
-    
-        if !context_files.is_empty() {
-            profile_context_files
-                .extend(context_files.into_iter().map(|(path, content)| (path, content, true)));
-        }
-    }
-    let matched_files: Vec<super::MatchedFile> = profile_context_files.into_iter().map(|(path, content, is_temporary)| {
-        let tokens = TokenCounter::count_tokens(&content);
-        super::MatchedFile {
-            filename: path,
-            content,
-            tokens,
-            is_temporary,
-        }
-    }).collect();
-    let total_tokens = matched_files.iter().map(|f| f.tokens).sum();
-    let context_files_max_size = calc_max_context_files_size(session.conversation.model_info.as_ref());
-    let mut files_as_vec = matched_files
-        .iter()
-        .map(|f| (f.filename.clone(), f.content.clone()))
-        .collect::<Vec<_>>();
-    let dropped_files = drop_matched_context_files(&mut files_as_vec, context_files_max_size).ok();
-    let pinned_data = super::PinnedResourceData {
-        agent_files,
-        session_files,
-        matched_files,
-        total_tokens,
-        dropped_files,
-        context_files_max_size,
-    };
-    let data = super::ResourceData::PinnedResources(pinned_data);
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_remove_by_type(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<(), ChatError> {
+    let mut handler = get_handler(os, session, storage_type).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    let operation = ResourceOperation::Remove { id, name, path };
+
+    let data = handler.handle(operation).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+
+    let renderer = CliRenderer::new();
     renderer.render_with_session(&data, session)?;
     Ok(())
 }
 
-async fn handle_show_indexed(os: &Os, session: &mut ChatSession, expand: bool, renderer: &CliRenderer) -> Result<(), ChatError> {
-    let agent = session.conversation.agents.get_active();
-    Ok(match super::managers::KnowledgeResourceManager::new(os, agent).await {
-        Ok(mut manager) => {
-            let resource_op = super::ResourceOperation::Show { expand };
-            match manager.execute(resource_op).await {
-                Ok(data) => {
-                    renderer.render_with_session(&data, session)?;
-                }
-                Err(e) => {
-                    let error_data = super::ResourceData::Success(format!("Error: {}", e));
-                    renderer.render_with_session(&error_data, session)?;
-                }
-            }
+async fn handle_show(os: &Os, session: &mut ChatSession, expand: bool, storage_type: StorageType) -> Result<ChatState, ChatError> {
+    match storage_type {
+        StorageType::All => {
+            handle_show_by_type(os, session, expand, StorageType::Pinned).await?;
+            handle_show_by_type(os, session, expand, StorageType::Indexed).await?;
         }
-        Err(e) => {
-            let error_data = super::ResourceData::Success(format!("Failed to initialize knowledge manager: {}", e));
-            renderer.render_with_session(&error_data, session)?;
+        _ => {
+            handle_show_by_type(os, session, expand, storage_type).await?;
         }
-    })
+    }
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_show_by_type(os: &Os, session: &mut ChatSession, expand: bool, storage_type: StorageType) -> Result<(), ChatError> {
+    let mut handler = get_handler(os, session, storage_type).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    let operation = ResourceOperation::Show { expand };
+    
+    let data = handler.handle(operation).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    
+    let renderer = CliRenderer::new();
+    renderer.render_with_session(&data, session)?;
+    
+    Ok(())
 }
 
 async fn handle_status(os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
-        // Status only applies to indexed resources (background operations)
-        let agent = session.conversation.agents.get_active();
-        let knowledge_manager = match KnowledgeResourceManager::new(os, agent).await {
-            Ok(manager) => manager,
-            Err(e) => {
-                eprintln!("Failed to initialize knowledge manager: {}", e);
-                return Ok(ChatState::PromptUser { skip_printing_tools: true });
-            }
-        };
-        
-        let mut handler = ResourceHandler::new(
-            knowledge_manager,
-            CliRenderer::new()
-        );
-        
-        let resource_op = ResourceOperation::Status;
-        match handler.handle(resource_op, super::OutputFormat::Table).await {
-            Ok(output) => println!("{}", output),
-            Err(e) => eprintln!("Error: {}", e),
+    let mut handler = get_handler(os, session, StorageType::Indexed).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    let operation = ResourceOperation::Status;
+
+    let data = handler.handle(operation).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+
+    let renderer = CliRenderer::new();
+    renderer.render_with_session(&data, session)?;
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_clear(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: StorageType) -> Result<ChatState, ChatError> {
+    match storage_type {
+        StorageType::All => {
+            handle_clear_by_type(os, session, confirm, StorageType::Pinned).await?;
+            handle_clear_by_type(os, session, confirm, StorageType::Indexed).await?;
         }
-        
-        Ok(ChatState::PromptUser { skip_printing_tools: true })
+        _ => {
+            handle_clear_by_type(os, session, confirm, storage_type).await?;
+        }
     }
 
-async fn handle_clear(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: String) -> Result<ChatState, ChatError> {
-        match storage_type.as_str() {
-            "pinned" => {
-                let Some(context_manager) = &mut session.conversation.context_manager else {
-                    eprintln!("No context manager available");
-                    return Ok(ChatState::PromptUser { skip_printing_tools: true });
-                };
-                
-                let mut handler = ResourceHandler::new(
-                    ContextResourceManager::new(context_manager, os),
-                    CliRenderer::new()
-                );
-                
-                let resource_op = ResourceOperation::Clear { confirm };
-                match handler.handle(resource_op, super::OutputFormat::Table).await {
-                    Ok(output) => println!("{}", output),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
-            "indexed" => {
-                let agent = session.conversation.agents.get_active();
-                let knowledge_manager = match KnowledgeResourceManager::new(os, agent).await {
-                    Ok(manager) => manager,
-                    Err(e) => {
-                        eprintln!("Failed to initialize knowledge manager: {}", e);
-                        return Ok(ChatState::PromptUser { skip_printing_tools: true });
-                    }
-                };
-                
-                let mut handler = ResourceHandler::new(
-                    knowledge_manager,
-                    CliRenderer::new()
-                );
-                
-                let resource_op = ResourceOperation::Clear { confirm };
-                match handler.handle(resource_op, super::OutputFormat::Table).await {
-                    Ok(output) => println!("{}", output),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
-            "all" => {
-                // Clear both storage types
-                println!("Clearing both pinned and indexed resources...");
-                Box::pin(handle_clear(os, session, confirm, "pinned".to_string())).await?;
-                Box::pin(handle_clear(os, session, confirm, "indexed".to_string())).await?;
-            }
-            _ => {
-                eprintln!("Invalid storage type '{}'. Use 'pinned', 'indexed', or 'all'", storage_type);
-            }
-        }
-        
-        Ok(ChatState::PromptUser { skip_printing_tools: true })
-    }
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_clear_by_type(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: StorageType) -> Result<(), ChatError> {
+    let mut handler = get_handler(os, session, storage_type).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+    let operation = ResourceOperation::Clear { confirm };
+
+    let data = handler.handle(operation).await
+        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+
+    let renderer = CliRenderer::new();
+    renderer.render_with_session(&data, session)?;
+    Ok(())
+}
 
 async fn handle_cancel(os: &Os, session: &mut ChatSession, operation_id: String) -> Result<ChatState, ChatError> {
         // Cancel only applies to indexed resources (background operations)
-        let agent = session.conversation.agents.get_active();
-        let knowledge_manager = match KnowledgeResourceManager::new(os, agent).await {
-            Ok(manager) => manager,
-            Err(e) => {
-                eprintln!("Failed to initialize knowledge manager: {}", e);
-                return Ok(ChatState::PromptUser { skip_printing_tools: true });
-            }
-        };
-        
-        let mut handler = ResourceHandler::new(
-            knowledge_manager,
-            CliRenderer::new()
-        );
-        
+        let mut handler = get_handler(os, session, StorageType::Indexed).await
+            .map_err(|e| ChatError::Custom(e.to_string().into()))?;
+
         let resource_op = ResourceOperation::Cancel { operation_id };
-        match handler.handle(resource_op, super::OutputFormat::Table).await {
-            Ok(output) => println!("{}", output),
+        match handler.handle(resource_op).await {
+            Ok(output) => println!("{:?}", output),
             Err(e) => eprintln!("Error: {}", e),
         }
-        
+
         Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+/// Resource handler that delegates to different storage backends
+enum Handler<'a> {
+    Context(ResourceHandler<ContextResourceManager<'a>>),
+    Knowledge(ResourceHandler<KnowledgeResourceManager>),
+}
+
+impl<'a> Handler<'a> {
+    /// Handle a resource operation, returning the result or an error
+    async fn handle(&mut self, operation: ResourceOperation) -> Result<ResourceData, eyre::Report> {
+        match self {
+            Handler::Context(handler) if handler.supports_operation(&operation) => {
+                handler.handle(operation).await
+            }
+            Handler::Knowledge(handler) if handler.supports_operation(&operation) => {
+                handler.handle(operation).await
+            }
+            _ => Err(eyre::eyre!("Operation not supported by this handler")),
+        }
+    }
+}
+
+/// Create a handler for the specified storage type
+/// 
+/// # Errors
+/// Returns error if:
+/// - Context manager is unavailable for Pinned storage
+/// - Knowledge manager creation fails for Indexed storage  
+/// - StorageType::All is requested (not supported)
+async fn get_handler<'a>(
+    os: &'a Os, 
+    session: &'a mut ChatSession, 
+    storage_type: StorageType
+) -> Result<Handler<'a>, eyre::Report> {
+    match storage_type {
+        StorageType::Pinned => {
+            let context_manager = session.conversation.context_manager.as_mut()
+                .ok_or_else(|| eyre::eyre!("Context manager not available"))?;
+            Ok(Handler::Context(ResourceHandler::new(
+                ContextResourceManager::new(context_manager, os)
+            )))
+        }
+        StorageType::Indexed => {
+            let agent = session.conversation.agents.get_active();
+            let knowledge_manager = KnowledgeResourceManager::new(os, agent).await?;
+            Ok(Handler::Knowledge(ResourceHandler::new(knowledge_manager)))
+        }
+        StorageType::All => {
+            Err(eyre::eyre!("StorageType::All not supported for single handler operations"))
+        }
+    }
 }
 
 impl ResourceNewCommand {
@@ -467,7 +331,6 @@ impl ResourceNewCommand {
         match self {
             Self::Add { .. } => "add",
             Self::Remove { .. } => "remove",
-            Self::Search { .. } => "search",
             Self::Show { .. } => "show",
             Self::Status => "status",
             Self::Clear { .. } => "clear",
@@ -482,17 +345,17 @@ mod tests {
 
     #[test]
     fn test_operation_names() {
-        assert_eq!(ResourceNewCommand::Add { 
-            name: "test".into(), 
-            value: "test".into(), 
-            r#type: "indexed".into() 
+        assert_eq!(ResourceNewCommand::Add {
+            name: "test".into(),
+            value: "test".into(),
+            r#type: "indexed".into()
         }.name(), "add");
-        
-        assert_eq!(ResourceNewCommand::Show { 
-            expand: false, 
-            r#type: "all".into() 
+
+        assert_eq!(ResourceNewCommand::Show {
+            expand: false,
+            r#type: "all".into()
         }.name(), "show");
-        
+
         assert_eq!(ResourceNewCommand::Status.name(), "status");
     }
 }

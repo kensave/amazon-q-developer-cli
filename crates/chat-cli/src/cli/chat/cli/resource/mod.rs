@@ -6,4 +6,3 @@ pub mod renderer;
 
 pub use types::*;
 pub use command::ResourceNewCommand;
-pub use renderer::ResourceRenderer;
