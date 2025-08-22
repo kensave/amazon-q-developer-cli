@@ -9,6 +9,7 @@ pub mod model;
 pub mod persist;
 pub mod profile;
 pub mod prompts;
+pub mod resource;
 pub mod subscribe;
 pub mod tools;
 pub mod usage;
@@ -19,12 +20,12 @@ use compact::CompactArgs;
 use context::ContextSubcommand;
 use editor::EditorArgs;
 use hooks::HooksArgs;
-use knowledge::KnowledgeSubcommand;
 use mcp::McpArgs;
 use model::ModelArgs;
 use persist::PersistSubcommand;
 use profile::AgentSubcommand;
 use prompts::PromptsArgs;
+use resource::ResourceSubcommand;
 use tools::ToolsArgs;
 
 use crate::cli::chat::cli::subscribe::SubscribeArgs;
@@ -53,13 +54,12 @@ pub enum SlashCommand {
     Agent(AgentSubcommand),
     #[command(hide = true)]
     Profile,
-    /// Manage context files for the chat session
+    /// Manage context files for the chat session (original functionality)
     #[command(subcommand)]
     Context(ContextSubcommand),
-    /// (Beta) Manage knowledge base for persistent context storage. Requires "q settings
-    /// chat.enableKnowledge true"
-    #[command(subcommand, hide = true)]
-    Knowledge(KnowledgeSubcommand),
+    /// Manage resources (pinned and indexed)
+    #[command(subcommand)]
+    Resource(ResourceSubcommand),
     /// Open $EDITOR (defaults to vi) to compose a prompt
     #[command(name = "editor")]
     PromptEditor(EditorArgs),
@@ -117,7 +117,7 @@ impl SlashCommand {
                 })
             },
             Self::Context(args) => args.execute(os, session).await,
-            Self::Knowledge(subcommand) => subcommand.execute(os, session).await,
+            Self::Resource(subcommand) => subcommand.execute(os, session).await,
             Self::PromptEditor(args) => args.execute(session).await,
             Self::Compact(args) => args.execute(os, session).await,
             Self::Tools(args) => args.execute(session).await,
@@ -156,7 +156,7 @@ impl SlashCommand {
             Self::Agent(_) => "agent",
             Self::Profile => "profile",
             Self::Context(_) => "context",
-            Self::Knowledge(_) => "knowledge",
+            Self::Resource(_) => "resource",
             Self::PromptEditor(_) => "editor",
             Self::Compact(_) => "compact",
             Self::Tools(_) => "tools",
@@ -178,7 +178,7 @@ impl SlashCommand {
         match self {
             SlashCommand::Agent(sub) => Some(sub.name()),
             SlashCommand::Context(sub) => Some(sub.name()),
-            SlashCommand::Knowledge(sub) => Some(sub.name()),
+            SlashCommand::Resource(sub) => Some(sub.name()),
             SlashCommand::Tools(arg) => arg.subcommand_name(),
             SlashCommand::Prompts(arg) => arg.subcommand_name(),
             _ => None,

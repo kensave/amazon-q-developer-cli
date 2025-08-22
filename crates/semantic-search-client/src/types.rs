@@ -104,6 +104,9 @@ pub struct KnowledgeContext {
     /// Number of items in the context
     pub item_count: usize,
 
+    /// Approximate number of tokens in the context
+    pub token_count: usize,
+
     /// Embedding type used for this context
     #[serde(default)]
     pub embedding_type: EmbeddingType,
@@ -120,6 +123,7 @@ impl KnowledgeContext {
         source_path: Option<String>,
         patterns: (Vec<String>, Vec<String>),
         item_count: usize,
+        token_count: usize,
         embedding_type: EmbeddingType,
     ) -> Self {
         let now = Utc::now();
@@ -134,6 +138,7 @@ impl KnowledgeContext {
             exclude_patterns: patterns.1,
             persistent,
             item_count,
+            token_count,
             embedding_type,
         }
     }

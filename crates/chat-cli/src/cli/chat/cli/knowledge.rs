@@ -140,7 +140,7 @@ impl KnowledgeSubcommand {
                 session.stderr,
                 style::SetAttribute(crossterm::style::Attribute::Bold),
                 style::SetForegroundColor(Color::Magenta),
-                style::Print(format!("👤 Agent ({}):\n", agent)),
+                style::Print(format!("  👤 Agent ({}):\n", agent)),
                 style::SetAttribute(crossterm::style::Attribute::Reset),
             )?;
 
@@ -240,7 +240,7 @@ impl KnowledgeSubcommand {
         path: &str,
         include_patterns: &[String],
         exclude_patterns: &[String],
-        index_type: &Option<String>
+        index_type: &Option<String>,
     ) -> OperationResult {
         match Self::validate_and_sanitize_path(os, path) {
             Ok(sanitized_path) => {
@@ -576,6 +576,7 @@ impl KnowledgeSubcommand {
         }
     }
 
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             KnowledgeSubcommand::Show => "show",

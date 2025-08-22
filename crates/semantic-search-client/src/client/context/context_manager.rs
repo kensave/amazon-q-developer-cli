@@ -132,6 +132,7 @@ impl ContextManager {
         let bm25_contexts = tokio::time::timeout(Duration::from_millis(100), self.bm25_contexts.read())
             .await
             .ok()?;
+            
         let context_arc = bm25_contexts.get(context_id)?;
         let context = context_arc.try_lock().ok()?;
 
@@ -139,15 +140,17 @@ impl ContextManager {
         let results: Vec<SearchResult> = search_results
             .into_iter()
             .filter_map(|(id, score)| {
-                context.get_data_points().get(id).map(|data_point| {
+                if let Some(data_point) = context.get_data_points().get(id) {
                     let vector = vec![0.0; 384];
                     let point = DataPoint {
                         id: data_point.id,
                         vector,
                         payload: data_point.payload.clone(),
                     };
-                    SearchResult::new(point, score)
-                })
+                    Some(SearchResult::new(point, score))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -267,6 +270,21 @@ impl ContextManager {
             self.load_semantic_context(context_id, &context_dir).await
         }
     }
+    
+    /// Simple token counting based on character count (similar to chat-cli)
+    fn count_tokens(content: &str) -> usize {
+        const TOKEN_TO_CHAR_RATIO: usize = 4; // Approximate ratio
+        (content.len() / TOKEN_TO_CHAR_RATIO + 5) / 10 * 10
+    }
+
+    async fn update_context_counts(&self, context_id: &str, added_items: usize, added_tokens: usize) {
+        let mut contexts = self.contexts.write().await;
+        if let Some(context) = contexts.get_mut(context_id) {
+            context.item_count += added_items;
+            context.token_count += added_tokens;
+            context.updated_at = chrono::Utc::now();
+        }
+    }
 
     async fn get_context_embedding_type(&self, context_id: &str) -> Option<EmbeddingType> {
         let contexts = self.contexts.read().await;
@@ -284,6 +302,22 @@ impl ContextManager {
 
         let data_file = context_dir.join(BM25_DATA_FILE);
         let bm25_context = BM25Context::new(data_file, DEFAULT_BM25_SCORE)?;
+        
+        // Update context metadata with actual counts from loaded data
+        let actual_item_count = bm25_context.get_data_points().len();
+        let actual_token_count: usize = bm25_context.get_data_points()
+            .iter()
+            .map(|dp| Self::count_tokens(&dp.content))
+            .sum();
+            
+        // Update the context metadata with actual counts
+        {
+            let mut contexts = self.contexts.write().await;
+            if let Some(context) = contexts.get_mut(context_id) {
+                context.item_count = actual_item_count;
+                context.token_count = actual_token_count;
+            }
+        }
 
         let mut bm25_contexts = self.bm25_contexts.write().await;
         bm25_contexts.insert(context_id.to_string(), Arc::new(Mutex::new(bm25_context)));
@@ -301,6 +335,27 @@ impl ContextManager {
 
         let data_file = context_dir.join(SEMANTIC_DATA_FILE);
         let semantic_context = SemanticContext::new(data_file)?;
+        
+        // Update context metadata with actual counts from loaded data
+        let actual_item_count = semantic_context.get_data_points().len();
+        let actual_token_count: usize = semantic_context.get_data_points()
+            .iter()
+            .map(|dp| {
+                dp.payload.get("text")
+                    .and_then(|v| v.as_str())
+                    .map(|s| Self::count_tokens(s))
+                    .unwrap_or(0)
+            })
+            .sum();
+            
+        // Update the context metadata with actual counts
+        {
+            let mut contexts = self.contexts.write().await;
+            if let Some(context) = contexts.get_mut(context_id) {
+                context.item_count = actual_item_count;
+                context.token_count = actual_token_count;
+            }
+        }
 
         let mut volatile_contexts = self.volatile_contexts.write().await;
         volatile_contexts.insert(context_id.to_string(), Arc::new(Mutex::new(semantic_context)));
@@ -427,5 +482,138 @@ impl ContextManager {
     /// Get BM25 contexts reference
     pub fn get_bm25_contexts_ref(&self) -> &BM25Contexts {
         &self.bm25_contexts
+    }
+
+    /// Add text chunks to an existing context
+    pub async fn add_text_chunks_to_context(&self, context_id: &str, chunks: Vec<String>, embedder: &dyn TextEmbedderTrait) -> std::result::Result<(), String> {
+        // Find the context
+        let contexts = self.get_contexts().await;
+        let _context = contexts.iter().find(|c| c.id == context_id)
+            .ok_or_else(|| format!("Context '{}' not found", context_id))?;
+
+        // Check if it's semantic or BM25 context
+        let embedding_type = self.get_context_embedding_type(&context_id).await;
+        
+        match embedding_type {
+            Some(crate::embedding::EmbeddingType::Best) => {
+                // Semantic context - generate embeddings and add
+                self.add_chunks_to_semantic_context(context_id, chunks, embedding_type.unwrap(), embedder).await
+            },
+            Some(crate::embedding::EmbeddingType::Fast) | None => {
+                // BM25 context - add directly
+                self.add_chunks_to_bm25_context(context_id, chunks).await
+            }
+        }
+    }
+
+    async fn add_chunks_to_bm25_context(&self, context_id: &str, chunks: Vec<String>) -> std::result::Result<(), String> {
+        if let Ok(bm25_contexts) = self.bm25_contexts.try_read() {
+            if let Some(context_mutex) = bm25_contexts.get(context_id) {
+                if let Ok(mut context) = context_mutex.try_lock() {
+                    // Convert chunks to BM25DataPoints
+                    let mut data_points = Vec::new();
+                    let base_id = context.get_data_points().len(); // Start from current count to avoid ID conflicts
+                    
+                    for (i, chunk) in chunks.iter().enumerate() {
+                        let mut metadata = std::collections::HashMap::new();
+                        metadata.insert("timestamp".to_string(), serde_json::Value::String(chrono::Utc::now().to_rfc3339()));
+                        metadata.insert("text".to_string(), serde_json::Value::String(chunk.clone())); // Add text field for compatibility
+                        
+                        let data_point_id = base_id + i;
+                        
+                        data_points.push(crate::types::BM25DataPoint {
+                            id: data_point_id, // Use unique ID based on existing count
+                            payload: metadata,
+                            content: chunk.clone(),
+                        });
+                    }
+                    
+                    // Add to context
+                    let data_points_len = data_points.len();
+                    let total_tokens: usize = data_points.iter().map(|dp| Self::count_tokens(&dp.content)).sum();
+                    
+                    context.add_data_points(data_points)
+                        .map_err(|e| format!("Failed to add data points: {}", e))?;
+                    
+                    // Save context to ensure persistence
+                    if let Err(e) = context.save() {
+                        eprintln!("Warning: Failed to save BM25 context: {}", e);
+                    }
+                    
+                    // Update knowledge context item and token counts
+                    self.update_context_counts(context_id, data_points_len, total_tokens).await;
+                    
+                    return Ok(());
+                } else {
+                    return Err(format!("BM25 context '{}' is locked", context_id));
+                }
+            }
+        }
+        Err(format!("BM25 context '{}' not found", context_id))
+    }
+
+    async fn add_chunks_to_semantic_context(
+        &self, 
+        context_id: &str, 
+        chunks: Vec<String>, 
+        _embedding_type: crate::embedding::EmbeddingType,
+        embedder: &dyn TextEmbedderTrait
+    ) -> std::result::Result<(), String> {
+        let volatile_contexts = self.volatile_contexts.read().await;
+        if let Some(context_mutex) = volatile_contexts.get(context_id) {
+            if let Ok(mut context) = context_mutex.try_lock() {
+                // Convert chunks to DataPoints with real embeddings
+                let mut data_points = Vec::new();
+                let base_id = context.get_data_points().len(); // Start from current count to avoid ID conflicts
+                
+                for (i, chunk) in chunks.iter().enumerate() {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("timestamp".to_string(), serde_json::Value::String(chrono::Utc::now().to_rfc3339()));
+                    metadata.insert("content".to_string(), serde_json::Value::String(chunk.clone()));
+                    metadata.insert("text".to_string(), serde_json::Value::String(chunk.clone())); // Add text field for compatibility
+                    
+                    // Generate actual embeddings using the embedder
+                    let vector = embedder.embed(chunk)
+                        .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+                    
+                    // Validate embedding dimension to prevent panic
+                    if vector.is_empty() {
+                        return Err(format!("Embedder returned empty vector for chunk: {}", chunk));
+                    }
+                    
+                    let data_point_id = base_id + i;
+                    data_points.push(crate::types::DataPoint {
+                        id: data_point_id, // Use unique ID based on existing count
+                        payload: metadata,
+                        vector,
+                    });
+                }
+                
+                // Add to semantic context
+                let data_points_len = data_points.len();
+                let total_tokens: usize = data_points.iter().map(|dp| {
+                    dp.payload.get("text")
+                        .and_then(|v| v.as_str())
+                        .map(|s| Self::count_tokens(s))
+                        .unwrap_or(0)
+                }).sum();
+                
+                context.add_data_points(data_points)
+                    .map_err(|e| format!("Failed to add data points: {}", e))?;
+                
+                // Save context to ensure persistence
+                if let Err(e) = context.save() {
+                    eprintln!("Warning: Failed to save semantic context: {}", e);
+                }
+                
+                // Update knowledge context item and token counts
+                self.update_context_counts(context_id, data_points_len, total_tokens).await;
+                
+                return Ok(());
+            } else {
+                return Err(format!("Semantic context '{}' is locked", context_id));
+            }
+        }
+        Err(format!("Semantic context '{}' not found", context_id))
     }
 }

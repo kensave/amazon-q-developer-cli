@@ -232,9 +232,9 @@
       ]
     }
   },
-  "knowledge": {
-    "name": "knowledge",
-    "description": "Store and retrieve information in knowledge base across chat sessions. Provides semantic search capabilities for files, directories, and text content.",
+  "resource": {
+    "name": "resource",
+    "description": "A tool for finding information from the user's indexed knowledge base containing previous conversations, documentation, code, and other materials.\n\n## Overview\nThis tool performs semantic search across indexed content to help answer questions that might have been discussed before or documented in the user's knowledge base. You MUST use this tool when you encounter unfamiliar terms, project names, or domain-specific concepts - search for them immediately rather than stating you don't have information.\n\n## When to use\n- MUST use when you encounter unfamiliar terms, project names, or technical concepts\n- When you need information that might be in previous conversations\n- When looking for codebase or project-specific knowledge\n- When the user asks about technical documentation or processes\n- When exploring domain-specific concepts that may have been indexed\n- MUST use before stating that information is unavailable or unknown\n- When the user asks about past discussions or references previous conversations\n\n## When not to use\n- For general web searches or external information\n- When the knowledge base has not been populated yet\n- For real-time data that changes frequently\n- For well-known concepts from your training data\n\n## Notes\n- You MUST search immediately when you encounter terms you don't recognize from training data\n- For complex questions, break down the query into core concepts to improve search relevance\n- The user's exact phrasing often contains critical contextual cues that enhance semantic matching\n- Try multiple related search terms if the first search doesn't yield relevant results\n- Search results include content from conversations, documentation, and other indexed materials",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -250,27 +250,35 @@
             "status",
             "cancel"
           ],
-          "description": "The knowledge operation to perform:\n- 'show': List all knowledge contexts (no additional parameters required)\n- 'add': Add content to knowledge base (requires 'name' and 'value')\n- 'remove': Remove content from knowledge base (requires one of: 'name', 'context_id', or 'path')\n- 'clear': Remove all knowledge contexts.\n- 'search': Search across knowledge contexts (requires 'query', optional 'context_id')\n- 'update': Update existing context with new content (requires 'path' and one of: 'name', 'context_id')\n- 'status': Show background operation status and progress\n- 'cancel': Cancel background operations (optional 'operation_id' to cancel specific operation, or cancel all if not provided)"
+          "description": "The resource operation to perform:\n- 'show': List all resource entries (no additional parameters required)\n- 'add': Add content to resources (requires 'name', 'value', and optional 'storage_type')\n- 'remove': Remove content from resources (requires one of: 'name', 'resource_id', or 'path')\n- 'clear': Remove resource entries (optional 'storage_type' to specify which type)\n- 'search': Search across indexed resources (requires 'query', optional 'resource_id')\n- 'update': Update existing resource with new content (requires 'path' and one of: 'name', 'resource_id')\n- 'status': Show background operation status and progress\n- 'cancel': Cancel background operations (optional 'operation_id' to cancel specific operation, or cancel all if not provided)"
         },
         "name": {
           "type": "string",
-          "description": "A descriptive name for the knowledge context. Required for 'add' operations. Can be used for 'remove' and 'update' operations to identify the context."
+          "description": "A descriptive name for the resource entry. Required for 'add' operations. Can be used for 'remove' and 'update' operations to identify the resource."
         },
         "value": {
           "type": "string",
-          "description": "The content to store in knowledge base. Required for 'add' operations. Can be either text content or a file/directory path. If it's a valid file or directory path, the content will be indexed; otherwise it's treated as text."
+          "description": "The content to store as a resource. Required for 'add' operations. Can be either text content or a file/directory path. If it's a valid file or directory path, the content will be indexed; otherwise it's treated as text."
         },
-        "context_id": {
+        "storage_type": {
           "type": "string",
-          "description": "The unique context identifier for targeted operations. Can be obtained from 'show' command. Used for 'remove', 'update', and 'search' operations to specify which context to operate on."
+          "enum": [
+            "pinned",
+            "indexed"
+          ],
+          "description": "Storage type for the resource: 'pinned' (always included in conversations) or 'indexed' (retrieved on demand). Defaults to 'pinned' for 'add' operations. For 'clear' operations, can be 'pinned', 'indexed', or 'all' (default)."
+        },
+        "resource_id": {
+          "type": "string",
+          "description": "The unique resource identifier for targeted operations. Can be obtained from 'show' command. Used for 'remove', 'update', and 'search' operations to specify which resource to operate on."
         },
         "path": {
           "type": "string",
-          "description": "File or directory path. Used in 'remove' operations to remove contexts by their source path, and required for 'update' operations to specify the new content location."
+          "description": "File or directory path. Used in 'remove' operations to remove resources by their source path, and required for 'update' operations to specify the new content location."
         },
         "query": {
           "type": "string",
-          "description": "The search query string. Required for 'search' operations. Performs semantic search across knowledge contexts to find relevant content."
+          "description": "The search query string. Required for 'search' operations. Performs semantic search across indexed resources to find relevant content."
         },
         "operation_id": {
           "type": "string",

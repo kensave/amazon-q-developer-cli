@@ -539,6 +539,7 @@ impl SemanticSearchClient {
             source_path,
             (vec![], vec![]),
             item_count,
+            0, // token_count - will be updated as items are added
             self.config.embedding_type,
         );
 
@@ -695,6 +696,7 @@ impl SemanticSearchClient {
                     None,
                     (vec![], vec![]),
                     0,
+                    0, // token_count
                     self.config.embedding_type, // Use client default
                 );
                 contexts.push(context);
@@ -876,6 +878,7 @@ impl SemanticSearchClient {
             None,
             (vec![], vec![]),
             context_guard.get_data_points().len(),
+            0, // token_count - will be calculated from existing data points
             self.config.embedding_type, // Use client default
         );
 

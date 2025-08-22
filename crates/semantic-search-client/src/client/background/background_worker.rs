@@ -434,6 +434,7 @@ impl BackgroundWorker {
                 exclude_patterns.as_deref().unwrap_or(&[]).to_vec(),
             ),
             item_count,
+            0, // token_count - will be updated as items are added
             embedding_type,
         );
 
