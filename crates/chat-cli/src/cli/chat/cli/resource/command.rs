@@ -1,12 +1,11 @@
 use clap::Subcommand;
 use eyre::Result;
 use crate::cli::chat::{ChatError, ChatSession, ChatState};
-use crate::cli::chat::cli::resource::{ResourceData, StorageType};
+use crate::cli::chat::cli::resource::StorageType;
 use crate::os::Os;
 use super::types::ResourceOperation;
 use super::managers::{ContextResourceManager, KnowledgeResourceManager};
-use super::renderer::{CliRenderer, ResourceRenderer};
-use super::manager::ResourceHandler;
+use super::manager::ResourceManager;
 
 /// Unified resource management system
 #[derive(Debug, PartialEq, Subcommand)]
@@ -101,7 +100,22 @@ impl ResourceNewCommand {
             }
         }
     }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Add { .. } => "add",
+            Self::Remove { .. } => "remove",
+            Self::Show { .. } => "show",
+            Self::Update { .. } => "update",
+            Self::Clear { .. } => "clear",
+            Self::Cancel { .. } => "cancel",
+        }
+    }
 }
+
+// ============================================================================
+// Command Handlers
+// ============================================================================
 
 async fn handle_add(
     os: &Os, 
@@ -115,9 +129,6 @@ async fn handle_add(
 ) -> Result<ChatState, ChatError> {
     validate_add_inputs(session, &storage_type, &include, &exclude, &index_type)?;
     
-    let mut handler = get_handler(os, session, storage_type).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-    
     let operation = ResourceOperation::Add { 
         name, 
         value, 
@@ -126,28 +137,148 @@ async fn handle_add(
         index_type 
     };
     
-    let data = handler.handle(operation).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-    
-    let renderer = CliRenderer::new();
-    renderer.render_with_session(&data, session)?;
+    let data = execute_operation(os, session, operation, storage_type).await?;
+    render_to_session(&data, session)?;
     
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
 
 async fn handle_update(os: &Os, session: &mut ChatSession, path: String, storage_type: StorageType) -> Result<ChatState, ChatError> {
-    let mut handler = get_handler(os, session, storage_type).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
     let operation = ResourceOperation::Update { path };
-
-    let data = handler.handle(operation).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-
-    let renderer = CliRenderer::new();
-    renderer.render_with_session(&data, session)?;
+    let data = execute_operation(os, session, operation, storage_type).await?;
+    render_to_session(&data, session)?;
 
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
+
+async fn handle_remove(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<ChatState, ChatError> {
+    for st in get_storage_types(storage_type) {
+        handle_remove_by_type(os, session, id.clone(), name.clone(), path.clone(), st).await?;
+    }
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_show(os: &Os, session: &mut ChatSession, expand: bool, storage_type: StorageType) -> Result<ChatState, ChatError> {
+    for st in get_storage_types(storage_type) {
+        handle_show_by_type(os, session, expand, st).await?;
+    }
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_clear(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: StorageType) -> Result<ChatState, ChatError> {
+    for st in get_storage_types(storage_type) {
+        handle_clear_by_type(os, session, confirm, st).await?;
+    }
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_status(os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
+    let operation = ResourceOperation::Status;
+    let data = execute_operation(os, session, operation, StorageType::Indexed).await?;
+    render_to_session(&data, session)?;
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+async fn handle_cancel(os: &Os, session: &mut ChatSession, operation_id: String) -> Result<ChatState, ChatError> {
+    let operation = ResourceOperation::Cancel { operation_id };
+    
+    match execute_operation(os, session, operation, StorageType::Indexed).await {
+        Ok(output) => println!("{:?}", output),
+        Err(e) => eprintln!("Error: {}", e),
+    }
+
+    Ok(ChatState::PromptUser { skip_printing_tools: true })
+}
+
+// ============================================================================
+// Helper Functions (by_type handlers)
+// ============================================================================
+
+async fn handle_remove_by_type(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<(), ChatError> {
+    let operation = ResourceOperation::Remove { id, name, path };
+    let data = execute_operation(os, session, operation, storage_type).await?;
+    render_to_session(&data, session)?;
+    Ok(())
+}
+
+async fn handle_show_by_type(os: &Os, session: &mut ChatSession, expand: bool, storage_type: StorageType) -> Result<(), ChatError> {
+    let operation = ResourceOperation::Show { expand };
+    let data = execute_operation(os, session, operation, storage_type).await?;
+    render_to_session(&data, session)?;
+    Ok(())
+}
+
+async fn handle_clear_by_type(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: StorageType) -> Result<(), ChatError> {
+    let operation = ResourceOperation::Clear { confirm };
+    let data = execute_operation(os, session, operation, storage_type).await?;
+    render_to_session(&data, session)?;
+    Ok(())
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+/// Convert any error to ChatError for consistent error handling
+fn to_chat_error(e: impl std::fmt::Display) -> ChatError {
+    ChatError::Custom(e.to_string().into())
+}
+
+/// Render resource data to session with colors and styling
+fn render_to_session(data: &super::types::ResourceData, session: &mut ChatSession) -> Result<(), std::io::Error> {
+    use super::renderer::{CliRenderer, ResourceRenderer};
+    let renderer = CliRenderer::new();
+    renderer.render_with_session(data, session)
+}
+
+/// Get storage types to iterate over - returns both Pinned and Indexed for All, otherwise the single type
+fn get_storage_types(storage_type: StorageType) -> Vec<StorageType> {
+    match storage_type {
+        StorageType::All => vec![StorageType::Pinned, StorageType::Indexed],
+        _ => vec![storage_type],
+    }
+}
+
+/// Create a context manager for pinned resources
+fn get_context_manager<'a>(os: &'a Os, session: &'a mut ChatSession) -> Result<ContextResourceManager<'a>, eyre::Report> {
+    let context_manager = session.conversation.context_manager.as_mut()
+        .ok_or_else(|| eyre::eyre!("Context manager not available"))?;
+    Ok(ContextResourceManager::new(context_manager, os))
+}
+
+/// Create a knowledge manager for indexed resources
+async fn get_knowledge_manager(os: &Os, session: &ChatSession) -> Result<KnowledgeResourceManager, eyre::Report> {
+    let agent = session.conversation.agents.get_active();
+    KnowledgeResourceManager::new(os, agent).await
+}
+
+/// Execute operation on the appropriate manager based on storage type
+async fn execute_operation(
+    os: &Os, 
+    session: &mut ChatSession, 
+    operation: ResourceOperation, 
+    storage_type: StorageType
+) -> Result<super::types::ResourceData, ChatError> {
+    match storage_type {
+        StorageType::Pinned => {
+            let mut manager = get_context_manager(os, session).map_err(to_chat_error)?;
+            manager.execute(operation).await.map_err(to_chat_error)
+        }
+        StorageType::Indexed => {
+            let mut manager = get_knowledge_manager(os, session).await.map_err(to_chat_error)?;
+            manager.execute(operation).await.map_err(to_chat_error)
+        }
+        StorageType::All => {
+            Err(ChatError::Custom("StorageType::All not supported for single operations".into()))
+        }
+    }
+}
+
+fn validate_add_inputs(
     session: &mut ChatSession,
     storage_type: &StorageType,
     include: &[String],
@@ -155,188 +286,12 @@ async fn handle_update(os: &Os, session: &mut ChatSession, path: String, storage
     index_type: &Option<String>
 ) -> Result<(), ChatError> {
     if *storage_type == StorageType::Pinned && (!include.is_empty() || !exclude.is_empty() || index_type.is_some()) {
-        let renderer = CliRenderer::new();
         let warning_data = super::ResourceData::Success(
             "Warning: include/exclude patterns and index-type are ignored for pinned resources".to_string()
         );
-        renderer.render_with_session(&warning_data, session)?;
+        render_to_session(&warning_data, session)?;
     }
     Ok(())
-}
-
-async fn handle_remove(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<ChatState, ChatError> {
-    match storage_type {
-        StorageType::All => {
-            handle_remove_by_type(os, session, id.clone(), name.clone(), path.clone(), StorageType::Pinned).await?;
-            handle_remove_by_type(os, session, id, name, path, StorageType::Indexed).await?;
-        }
-        _ => {
-            handle_remove_by_type(os, session, id, name, path, storage_type).await?;
-        }
-    }
-
-    Ok(ChatState::PromptUser { skip_printing_tools: true })
-}
-
-async fn handle_remove_by_type(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<(), ChatError> {
-    let mut handler = get_handler(os, session, storage_type).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-    let operation = ResourceOperation::Remove { id, name, path };
-
-    let data = handler.handle(operation).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-
-    let renderer = CliRenderer::new();
-    renderer.render_with_session(&data, session)?;
-    Ok(())
-}
-
-async fn handle_show(os: &Os, session: &mut ChatSession, expand: bool, storage_type: StorageType) -> Result<ChatState, ChatError> {
-    match storage_type {
-        StorageType::All => {
-            handle_show_by_type(os, session, expand, StorageType::Pinned).await?;
-            handle_show_by_type(os, session, expand, StorageType::Indexed).await?;
-        }
-        _ => {
-            handle_show_by_type(os, session, expand, storage_type).await?;
-        }
-    }
-
-    Ok(ChatState::PromptUser { skip_printing_tools: true })
-}
-
-async fn handle_show_by_type(os: &Os, session: &mut ChatSession, expand: bool, storage_type: StorageType) -> Result<(), ChatError> {
-    let mut handler = get_handler(os, session, storage_type).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-    let operation = ResourceOperation::Show { expand };
-    
-    let data = handler.handle(operation).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-    
-    let renderer = CliRenderer::new();
-    renderer.render_with_session(&data, session)?;
-    
-    Ok(())
-}
-
-async fn handle_status(os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
-    let mut handler = get_handler(os, session, StorageType::Indexed).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-    let operation = ResourceOperation::Status;
-
-    let data = handler.handle(operation).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-
-    let renderer = CliRenderer::new();
-    renderer.render_with_session(&data, session)?;
-
-    Ok(ChatState::PromptUser { skip_printing_tools: true })
-}
-
-async fn handle_clear(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: StorageType) -> Result<ChatState, ChatError> {
-    match storage_type {
-        StorageType::All => {
-            handle_clear_by_type(os, session, confirm, StorageType::Pinned).await?;
-            handle_clear_by_type(os, session, confirm, StorageType::Indexed).await?;
-        }
-        _ => {
-            handle_clear_by_type(os, session, confirm, storage_type).await?;
-        }
-    }
-
-    Ok(ChatState::PromptUser { skip_printing_tools: true })
-}
-
-async fn handle_clear_by_type(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: StorageType) -> Result<(), ChatError> {
-    let mut handler = get_handler(os, session, storage_type).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-    let operation = ResourceOperation::Clear { confirm };
-
-    let data = handler.handle(operation).await
-        .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-
-    let renderer = CliRenderer::new();
-    renderer.render_with_session(&data, session)?;
-    Ok(())
-}
-
-async fn handle_cancel(os: &Os, session: &mut ChatSession, operation_id: String) -> Result<ChatState, ChatError> {
-        // Cancel only applies to indexed resources (background operations)
-        let mut handler = get_handler(os, session, StorageType::Indexed).await
-            .map_err(|e| ChatError::Custom(e.to_string().into()))?;
-
-        let resource_op = ResourceOperation::Cancel { operation_id };
-        match handler.handle(resource_op).await {
-            Ok(output) => println!("{:?}", output),
-            Err(e) => eprintln!("Error: {}", e),
-        }
-
-        Ok(ChatState::PromptUser { skip_printing_tools: true })
-}
-
-/// Resource handler that delegates to different storage backends
-enum Handler<'a> {
-    Context(ResourceHandler<ContextResourceManager<'a>>),
-    Knowledge(ResourceHandler<KnowledgeResourceManager>),
-}
-
-impl<'a> Handler<'a> {
-    /// Handle a resource operation, returning the result or an error
-    async fn handle(&mut self, operation: ResourceOperation) -> Result<ResourceData, eyre::Report> {
-        match self {
-            Handler::Context(handler) if handler.supports_operation(&operation) => {
-                handler.handle(operation).await
-            }
-            Handler::Knowledge(handler) if handler.supports_operation(&operation) => {
-                handler.handle(operation).await
-            }
-            _ => Err(eyre::eyre!("Operation not supported by this handler")),
-        }
-    }
-}
-
-/// Create a handler for the specified storage type
-/// 
-/// # Errors
-/// Returns error if:
-/// - Context manager is unavailable for Pinned storage
-/// - Knowledge manager creation fails for Indexed storage  
-/// - StorageType::All is requested (not supported)
-async fn get_handler<'a>(
-    os: &'a Os, 
-    session: &'a mut ChatSession, 
-    storage_type: StorageType
-) -> Result<Handler<'a>, eyre::Report> {
-    match storage_type {
-        StorageType::Pinned => {
-            let context_manager = session.conversation.context_manager.as_mut()
-                .ok_or_else(|| eyre::eyre!("Context manager not available"))?;
-            Ok(Handler::Context(ResourceHandler::new(
-                ContextResourceManager::new(context_manager, os)
-            )))
-        }
-        StorageType::Indexed => {
-            let agent = session.conversation.agents.get_active();
-            let knowledge_manager = KnowledgeResourceManager::new(os, agent).await?;
-            Ok(Handler::Knowledge(ResourceHandler::new(knowledge_manager)))
-        }
-        StorageType::All => {
-            Err(eyre::eyre!("StorageType::All not supported for single handler operations"))
-        }
-    }
-}
-
-impl ResourceNewCommand {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Add { .. } => "add",
-            Self::Remove { .. } => "remove",
-            Self::Show { .. } => "show",
-            Self::Status => "status",
-            Self::Clear { .. } => "clear",
-            Self::Cancel { .. } => "cancel",
-        }
-    }
 }
 
 #[cfg(test)]
@@ -348,14 +303,20 @@ mod tests {
         assert_eq!(ResourceNewCommand::Add {
             name: "test".into(),
             value: "test".into(),
-            r#type: "indexed".into()
+            r#type: StorageType::Indexed,
+            include: vec![],
+            exclude: vec![],
+            index_type: None,
         }.name(), "add");
 
         assert_eq!(ResourceNewCommand::Show {
             expand: false,
-            r#type: "all".into()
+            r#type: StorageType::All,
         }.name(), "show");
 
-        assert_eq!(ResourceNewCommand::Status.name(), "status");
+        assert_eq!(ResourceNewCommand::Update {
+            path: "test".into(),
+            r#type: StorageType::Indexed,
+        }.name(), "update");
     }
 }

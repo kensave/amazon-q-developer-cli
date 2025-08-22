@@ -271,7 +271,7 @@ impl ResourceManager for KnowledgeResourceManager {
                 Ok(ResourceData::Status(status_data))
             }
             ResourceOperation::Clear { .. } => {
-                let result = store.clear().await
+                let result = store.clear_immediate().await
                     .unwrap_or_else(|e| format!("Failed to clear: {}", e));
                 Ok(ResourceData::Success(result))
             }
