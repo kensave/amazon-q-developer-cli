@@ -1,6 +1,7 @@
 pub mod cli;
 mod consts;
 pub mod context;
+pub mod resource;
 mod conversation;
 mod error_formatter;
 mod input_source;

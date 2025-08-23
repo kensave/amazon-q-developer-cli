@@ -1,10 +1,9 @@
 use clap::Subcommand;
 use eyre::Result;
 use crate::cli::chat::{ChatError, ChatSession, ChatState};
-use crate::cli::chat::cli::resource::StorageType;
+use crate::cli::chat::resource::{StorageType, ResourceOperation, ResourceData};
+use crate::cli::chat::resource::core::ResourceCore;
 use crate::os::Os;
-use super::types::ResourceOperation;
-use super::core::ResourceCore;
 
 // Parameter structs to simplify function signatures
 #[derive(Debug)]
@@ -262,7 +261,7 @@ async fn invoke_by_storage_type(
     storage_type: StorageType,
     os: &Os,
     session: &mut ChatSession,
-) -> Result<super::types::ResourceData, ChatError> {
+) -> Result<ResourceData, ChatError> {
     match storage_type {
         StorageType::Pinned => {
             let context_manager = session.conversation.context_manager.as_mut()
@@ -280,8 +279,8 @@ async fn invoke_by_storage_type(
 }
 
 /// Render resource data to session with colors and styling
-fn render_to_session(data: &super::types::ResourceData, session: &mut ChatSession) -> Result<(), std::io::Error> {
-    use super::renderer::{CliRenderer, ResourceRenderer};
+fn render_to_session(data: &ResourceData, session: &mut ChatSession) -> Result<(), std::io::Error> {
+    use crate::cli::chat::resource::renderer::{CliRenderer, ResourceRenderer};
     let renderer = CliRenderer::new();
     renderer.render_with_session(data, session)
 }
@@ -302,7 +301,7 @@ fn validate_add_inputs(
     index_type: &Option<String>
 ) -> Result<(), ChatError> {
     if *storage_type == StorageType::Pinned && (!include.is_empty() || !exclude.is_empty() || index_type.is_some()) {
-        let warning_data = super::ResourceData::Success(
+        let warning_data = ResourceData::Success(
             "Warning: include/exclude patterns and index-type are ignored for pinned resources".to_string()
         );
         render_to_session(&warning_data, session)?;

@@ -110,7 +110,7 @@ impl Tool {
             Tool::Custom(custom_tool) => custom_tool.eval_perm(agent),
             Tool::GhIssue(_) => PermissionEvalResult::Allow,
             Tool::Thinking(_) => PermissionEvalResult::Allow,
-            Tool::Resource(resource) => resource.eval_perm(agent),
+            Tool::Resource(resource) => resource.permission_eval(agent),
         }
     }
 
@@ -129,7 +129,7 @@ impl Tool {
             Tool::UseAws(use_aws) => use_aws.invoke(os, stdout).await,
             Tool::Custom(custom_tool) => custom_tool.invoke(os, stdout).await,
             Tool::GhIssue(gh_issue) => gh_issue.invoke(os, stdout).await,
-            Tool::Resource(resource) => resource.invoke(os, stdout, agent).await,
+            Tool::Resource(resource) => resource.invoke(os, agent).await,
             Tool::Thinking(think) => think.invoke(stdout).await,
         }
     }

@@ -1,6 +1,6 @@
 use crossterm::{execute, style::{self, Color}};
 
-use crate::cli::chat::cli::ChatSession;
+use crate::cli::chat::ChatSession;
 use super::types::{ResourceData, PinnedResourceData, IndexedResourceData, OutputFormat};
 
 // Styling helpers to eliminate DRY violations
@@ -214,6 +214,69 @@ impl CliRenderer {
             execute!(session.stderr, style::Print("\n"))?;
         }
 
+        Ok(())
+    }
+}
+pub struct ToolRenderer;
+
+impl ToolRenderer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ResourceRenderer for ToolRenderer {
+    fn render(&self, data: &ResourceData, _format: OutputFormat) -> String {
+        match data {
+            ResourceData::Success(msg) => msg.clone(),
+            ResourceData::PinnedResources(pinned) => {
+                if pinned.session_files.is_empty() && pinned.agent_files.is_empty() {
+                    "No pinned resources found.".to_string()
+                } else {
+                    let total_files = pinned.session_files.len() + pinned.agent_files.len();
+                    let mut output = format!("📌 Pinned Resources ({}):\n", total_files);
+                    if !pinned.session_files.is_empty() {
+                        output.push_str(&format!("• Session files: {} items\n", pinned.session_files.len()));
+                    }
+                    if !pinned.agent_files.is_empty() {
+                        output.push_str(&format!("• Agent files: {} items\n", pinned.agent_files.len()));
+                    }
+                    output.push_str(&format!("• Total tokens: {}", pinned.total_tokens));
+                    output
+                }
+            }
+            ResourceData::IndexedResources(indexed) => {
+                if indexed.items.is_empty() {
+                    "No indexed resources found.".to_string()
+                } else {
+                    let mut output = format!("🔍 Indexed Resources ({}):\n", indexed.items.len());
+                    for item in &indexed.items {
+                        let status = match item.metadata.resource_type.as_str() {
+                            "indexing" => " (indexing)",
+                            _ => ""
+                        };
+                        output.push_str(&format!("• {}{} ({} items) - Type: indexed\n", item.name, status, item.metadata.size));
+                    }
+                    output
+                }
+            }
+            ResourceData::Status(status) => {
+                let mut output = format!("Status: {} items total\n", status.total_items);
+                if status.active_operations.is_empty() {
+                    output.push_str("No active operations");
+                } else {
+                    output.push_str(&format!("Active Operations ({}):\n", status.active_operations.len()));
+                    for op in &status.active_operations {
+                        output.push_str(&format!("• {} - {}\n", op.operation_type, op.status));
+                    }
+                }
+                output
+            }
+        }
+    }
+
+    fn render_with_session(&self, _data: &ResourceData, _session: &mut ChatSession) -> Result<(), std::io::Error> {
+        // Tools don't use session rendering, just return the string
         Ok(())
     }
 }
