@@ -37,15 +37,6 @@ impl StorageType {
             StorageType::All => "all"
         }
     }
-
-    pub fn from_str_option(s: &str) -> Option<Self> {
-        match s {
-            "pinned" => Some(StorageType::Pinned),
-            "indexed" => Some(StorageType::Indexed),
-            "all" => Some(StorageType::All),
-            _ => None
-        }
-    }
 }
 
 impl Default for StorageType {

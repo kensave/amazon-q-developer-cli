@@ -4,12 +4,30 @@ use crate::cli::chat::{ChatError, ChatSession, ChatState};
 use crate::cli::chat::cli::resource::StorageType;
 use crate::os::Os;
 use super::types::ResourceOperation;
-use super::managers::{ContextResourceManager, KnowledgeResourceManager};
-use super::manager::ResourceManager;
+use super::core::ResourceCore;
+
+// Parameter structs to simplify function signatures
+#[derive(Debug)]
+struct AddParams {
+    name: String,
+    value: String,
+    storage_type: StorageType,
+    include: Vec<String>,
+    exclude: Vec<String>,
+    index_type: Option<String>,
+}
+
+#[derive(Debug)]
+struct RemoveParams {
+    id: Option<String>,
+    name: Option<String>,
+    path: Option<String>,
+    storage_type: StorageType,
+}
 
 /// Unified resource management system
 #[derive(Debug, PartialEq, Subcommand)]
-pub enum ResourceNewCommand {
+pub enum ResourceCommand {
     /// Add content to resources
     Add {
         /// Name for the resource entry
@@ -77,14 +95,16 @@ pub enum ResourceNewCommand {
     },
 }
 
-impl ResourceNewCommand {
+impl ResourceCommand {
     pub async fn execute(self, os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
         match self {
             Self::Add { name, value, r#type, include, exclude, index_type } => {
-                handle_add(os, session, name, value, r#type, include, exclude, index_type).await
+                let params = AddParams { name, value, storage_type: r#type, include, exclude, index_type };
+                handle_add(os, session, params).await
             }
             Self::Remove { id, name, path, r#type } => {
-                handle_remove(os, session, id, name, path, r#type).await
+                let params = RemoveParams { id, name, path, storage_type: r#type };
+                handle_remove(os, session, params).await
             }
             Self::Show { expand, r#type } => {
                 handle_show(os, session, expand, r#type).await
@@ -117,45 +137,60 @@ impl ResourceNewCommand {
 // Command Handlers
 // ============================================================================
 
-async fn handle_add(
-    os: &Os, 
-    session: &mut ChatSession, 
-    name: String, 
-    value: String, 
-    storage_type: StorageType,
-    include: Vec<String>,
-    exclude: Vec<String>,
-    index_type: Option<String>
-) -> Result<ChatState, ChatError> {
-    validate_add_inputs(session, &storage_type, &include, &exclude, &index_type)?;
-    
-    let operation = ResourceOperation::Add { 
-        name, 
-        value, 
-        include_patterns: (!include.is_empty()).then_some(include),
-        exclude_patterns: (!exclude.is_empty()).then_some(exclude),
-        index_type 
+async fn handle_add(os: &Os, session: &mut ChatSession, params: AddParams) -> Result<ChatState, ChatError> {
+    validate_add_inputs(session, &params.storage_type, &params.include, &params.exclude, &params.index_type)?;
+
+    let operation = ResourceOperation::Add {
+        name: params.name,
+        value: params.value,
+        include_patterns: (!params.include.is_empty()).then_some(params.include),
+        exclude_patterns: (!params.exclude.is_empty()).then_some(params.exclude),
+        index_type: params.index_type
     };
-    
-    let data = execute_operation(os, session, operation, storage_type).await?;
+
+    let data = match params.storage_type {
+        StorageType::Pinned => {
+            let context_manager = session.conversation.context_manager.as_mut()
+                .ok_or_else(|| ChatError::Custom("Context manager not available".into()))?;
+            ResourceCore::invoke_pinned(operation, context_manager, os).await.map_err(to_chat_error)?
+        }
+        StorageType::Indexed => {
+            let agent = session.conversation.agents.get_active();
+            ResourceCore::invoke_indexed(operation, os, agent).await.map_err(to_chat_error)?
+        }
+        StorageType::All => {
+            return Err(ChatError::Custom("StorageType::All not supported for add operation".into()));
+        }
+    };
+
     render_to_session(&data, session)?;
-    
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
 
 async fn handle_update(os: &Os, session: &mut ChatSession, path: String, storage_type: StorageType) -> Result<ChatState, ChatError> {
     let operation = ResourceOperation::Update { path };
-    let data = execute_operation(os, session, operation, storage_type).await?;
-    render_to_session(&data, session)?;
 
+    let data = match storage_type {
+        StorageType::Pinned => {
+            return Err(ChatError::Custom("Update not supported for pinned resources".into()));
+        }
+        StorageType::Indexed => {
+            let agent = session.conversation.agents.get_active();
+            ResourceCore::invoke_indexed(operation, os, agent).await.map_err(to_chat_error)?
+        }
+        StorageType::All => {
+            return Err(ChatError::Custom("StorageType::All not supported for update operation".into()));
+        }
+    };
+
+    render_to_session(&data, session)?;
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
 
-async fn handle_remove(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<ChatState, ChatError> {
-    for st in get_storage_types(storage_type) {
-        handle_remove_by_type(os, session, id.clone(), name.clone(), path.clone(), st).await?;
+async fn handle_remove(os: &Os, session: &mut ChatSession, params: RemoveParams) -> Result<ChatState, ChatError> {
+    for st in get_storage_types(params.storage_type) {
+        handle_remove_by_type(os, session, params.id.clone(), params.name.clone(), params.path.clone(), st).await?;
     }
-
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
 
@@ -175,22 +210,12 @@ async fn handle_clear(os: &Os, session: &mut ChatSession, confirm: bool, storage
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
 
-async fn handle_status(os: &Os, session: &mut ChatSession) -> Result<ChatState, ChatError> {
-    let operation = ResourceOperation::Status;
-    let data = execute_operation(os, session, operation, StorageType::Indexed).await?;
-    render_to_session(&data, session)?;
-
-    Ok(ChatState::PromptUser { skip_printing_tools: true })
-}
-
 async fn handle_cancel(os: &Os, session: &mut ChatSession, operation_id: String) -> Result<ChatState, ChatError> {
     let operation = ResourceOperation::Cancel { operation_id };
-    
-    match execute_operation(os, session, operation, StorageType::Indexed).await {
-        Ok(output) => println!("{:?}", output),
-        Err(e) => eprintln!("Error: {}", e),
-    }
+    let agent = session.conversation.agents.get_active();
 
+    let data = ResourceCore::invoke_indexed(operation, os, agent).await.map_err(to_chat_error)?;
+    render_to_session(&data, session)?;
     Ok(ChatState::PromptUser { skip_printing_tools: true })
 }
 
@@ -198,25 +223,28 @@ async fn handle_cancel(os: &Os, session: &mut ChatSession, operation_id: String)
 // Helper Functions (by_type handlers)
 // ============================================================================
 
-async fn handle_remove_by_type(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<(), ChatError> {
-    let operation = ResourceOperation::Remove { id, name, path };
-    let data = execute_operation(os, session, operation, storage_type).await?;
+/// Generic handler for operations by storage type - eliminates DRY violation
+async fn handle_operation_by_type(
+    operation: ResourceOperation,
+    storage_type: StorageType,
+    os: &Os,
+    session: &mut ChatSession,
+) -> Result<(), ChatError> {
+    let data = invoke_by_storage_type(operation, storage_type, os, session).await?;
     render_to_session(&data, session)?;
     Ok(())
+}
+
+async fn handle_remove_by_type(os: &Os, session: &mut ChatSession, id: Option<String>, name: Option<String>, path: Option<String>, storage_type: StorageType) -> Result<(), ChatError> {
+    handle_operation_by_type(ResourceOperation::Remove { id, name, path }, storage_type, os, session).await
 }
 
 async fn handle_show_by_type(os: &Os, session: &mut ChatSession, expand: bool, storage_type: StorageType) -> Result<(), ChatError> {
-    let operation = ResourceOperation::Show { expand };
-    let data = execute_operation(os, session, operation, storage_type).await?;
-    render_to_session(&data, session)?;
-    Ok(())
+    handle_operation_by_type(ResourceOperation::Show { expand }, storage_type, os, session).await
 }
 
 async fn handle_clear_by_type(os: &Os, session: &mut ChatSession, confirm: bool, storage_type: StorageType) -> Result<(), ChatError> {
-    let operation = ResourceOperation::Clear { confirm };
-    let data = execute_operation(os, session, operation, storage_type).await?;
-    render_to_session(&data, session)?;
-    Ok(())
+    handle_operation_by_type(ResourceOperation::Clear { confirm }, storage_type, os, session).await
 }
 
 // ============================================================================
@@ -226,6 +254,29 @@ async fn handle_clear_by_type(os: &Os, session: &mut ChatSession, confirm: bool,
 /// Convert any error to ChatError for consistent error handling
 fn to_chat_error(e: impl std::fmt::Display) -> ChatError {
     ChatError::Custom(e.to_string().into())
+}
+
+/// Invoke operation by storage type - eliminates DRY violation
+async fn invoke_by_storage_type(
+    operation: ResourceOperation,
+    storage_type: StorageType,
+    os: &Os,
+    session: &mut ChatSession,
+) -> Result<super::types::ResourceData, ChatError> {
+    match storage_type {
+        StorageType::Pinned => {
+            let context_manager = session.conversation.context_manager.as_mut()
+                .ok_or_else(|| ChatError::Custom("Context manager not available".into()))?;
+            ResourceCore::invoke_pinned(operation, context_manager, os).await.map_err(to_chat_error)
+        }
+        StorageType::Indexed => {
+            let agent = session.conversation.agents.get_active();
+            ResourceCore::invoke_indexed(operation, os, agent).await.map_err(to_chat_error)
+        }
+        StorageType::All => {
+            Err(ChatError::Custom("StorageType::All should not reach single invocation".into()))
+        }
+    }
 }
 
 /// Render resource data to session with colors and styling
@@ -240,41 +291,6 @@ fn get_storage_types(storage_type: StorageType) -> Vec<StorageType> {
     match storage_type {
         StorageType::All => vec![StorageType::Pinned, StorageType::Indexed],
         _ => vec![storage_type],
-    }
-}
-
-/// Create a context manager for pinned resources
-fn get_context_manager<'a>(os: &'a Os, session: &'a mut ChatSession) -> Result<ContextResourceManager<'a>, eyre::Report> {
-    let context_manager = session.conversation.context_manager.as_mut()
-        .ok_or_else(|| eyre::eyre!("Context manager not available"))?;
-    Ok(ContextResourceManager::new(context_manager, os))
-}
-
-/// Create a knowledge manager for indexed resources
-async fn get_knowledge_manager(os: &Os, session: &ChatSession) -> Result<KnowledgeResourceManager, eyre::Report> {
-    let agent = session.conversation.agents.get_active();
-    KnowledgeResourceManager::new(os, agent).await
-}
-
-/// Execute operation on the appropriate manager based on storage type
-async fn execute_operation(
-    os: &Os, 
-    session: &mut ChatSession, 
-    operation: ResourceOperation, 
-    storage_type: StorageType
-) -> Result<super::types::ResourceData, ChatError> {
-    match storage_type {
-        StorageType::Pinned => {
-            let mut manager = get_context_manager(os, session).map_err(to_chat_error)?;
-            manager.execute(operation).await.map_err(to_chat_error)
-        }
-        StorageType::Indexed => {
-            let mut manager = get_knowledge_manager(os, session).await.map_err(to_chat_error)?;
-            manager.execute(operation).await.map_err(to_chat_error)
-        }
-        StorageType::All => {
-            Err(ChatError::Custom("StorageType::All not supported for single operations".into()))
-        }
     }
 }
 
@@ -300,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_operation_names() {
-        assert_eq!(ResourceNewCommand::Add {
+        assert_eq!(ResourceCommand::Add {
             name: "test".into(),
             value: "test".into(),
             r#type: StorageType::Indexed,
@@ -309,12 +325,12 @@ mod tests {
             index_type: None,
         }.name(), "add");
 
-        assert_eq!(ResourceNewCommand::Show {
+        assert_eq!(ResourceCommand::Show {
             expand: false,
             r#type: StorageType::All,
         }.name(), "show");
 
-        assert_eq!(ResourceNewCommand::Update {
+        assert_eq!(ResourceCommand::Update {
             path: "test".into(),
             r#type: StorageType::Indexed,
         }.name(), "update");

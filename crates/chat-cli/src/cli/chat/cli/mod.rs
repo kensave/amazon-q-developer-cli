@@ -25,7 +25,7 @@ use model::ModelArgs;
 use persist::PersistSubcommand;
 use profile::AgentSubcommand;
 use prompts::PromptsArgs;
-use resource::ResourceNewCommand;
+use resource::ResourceCommand;
 use tools::ToolsArgs;
 
 use crate::cli::chat::cli::subscribe::SubscribeArgs;
@@ -59,7 +59,7 @@ pub enum SlashCommand {
     Context(ContextSubcommand),
     /// Manage resources (pinned and indexed)
     #[command(subcommand)]
-    Resource(ResourceNewCommand),
+    Resource(ResourceCommand),
     /// Open $EDITOR (defaults to vi) to compose a prompt
     #[command(name = "editor")]
     PromptEditor(EditorArgs),
