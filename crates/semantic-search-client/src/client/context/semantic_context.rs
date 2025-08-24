@@ -1,19 +1,10 @@
-use std::fs::{
-    self,
-    File,
-};
-use std::io::{
-    BufReader,
-    BufWriter,
-};
+use std::fs::{self, File};
+use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 
 use crate::error::Result;
 use crate::index::VectorIndex;
-use crate::types::{
-    DataPoint,
-    SearchResult,
-};
+use crate::types::{DataPoint, SearchResult};
 
 /// A semantic context containing data points and a vector index
 pub struct SemanticContext {
@@ -97,9 +88,6 @@ impl SemanticContext {
 
         // Update the index
         self.update_index_by_range(start_idx, end_idx)?;
-
-        // Save to disk
-        self.save()?;
 
         Ok(count)
     }

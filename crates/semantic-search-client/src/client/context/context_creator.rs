@@ -44,6 +44,7 @@ impl ContextCreator {
         context_dir: &Path,
         items: &[serde_json::Value],
         embedding_type: EmbeddingType,
+        persistent: bool,
         operation_id: Uuid,
         cancel_token: &CancellationToken,
         operation_manager: &OperationManager,
@@ -54,6 +55,7 @@ impl ContextCreator {
             self.create_bm25_context(
                 context_dir,
                 items,
+                persistent,
                 operation_id,
                 cancel_token,
                 operation_manager,
@@ -64,6 +66,7 @@ impl ContextCreator {
             self.create_semantic_context(
                 context_dir,
                 items,
+                persistent,
                 operation_id,
                 cancel_token,
                 operation_manager,
@@ -78,6 +81,7 @@ impl ContextCreator {
         &self,
         context_dir: &Path,
         items: &[serde_json::Value],
+        persistent: bool,
         operation_id: Uuid,
         cancel_token: &CancellationToken,
         operation_manager: &OperationManager,
@@ -128,7 +132,10 @@ impl ContextCreator {
             .add_data_points(data_points)
             .map_err(|e| format!("Failed to add BM25 data points: {}", e))?;
 
-        let _ = bm25_context.save();
+        // Save to disk if persistent
+        if persistent {
+            let _ = bm25_context.save();
+        }
 
         // Store the BM25 context
         let context_id = context_dir
@@ -150,6 +157,7 @@ impl ContextCreator {
         &self,
         context_dir: &Path,
         items: &[serde_json::Value],
+        persistent: bool,
         operation_id: Uuid,
         cancel_token: &CancellationToken,
         operation_manager: &OperationManager,
@@ -205,8 +213,10 @@ impl ContextCreator {
             .add_data_points(data_points)
             .map_err(|e| format!("Failed to add data points: {}", e))?;
 
-        // Persist context.
-        let _ = semantic_context.save();
+        // Persist context if persistent
+        if persistent {
+            let _ = semantic_context.save();
+        }
 
         // Store the semantic context
         let context_id = context_dir

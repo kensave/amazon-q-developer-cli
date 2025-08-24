@@ -245,6 +245,7 @@ impl BackgroundWorker {
                 &context_dir,
                 &items,
                 effective_embedding_type,
+                params.persistent,
                 operation_id,
                 &cancel_token,
                 &self.operation_manager,
