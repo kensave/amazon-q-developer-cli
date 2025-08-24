@@ -3,7 +3,8 @@ use clap::ValueEnum;
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, PartialEq, ValueEnum)]
+#[derive(Debug, Clone, PartialEq, ValueEnum, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StorageType {
     Pinned,
     Indexed,
@@ -48,19 +49,18 @@ impl Default for StorageType {
 /// Core resource operation types
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResourceOperation {
-    Add { 
-        name: String, 
+    Add {
+        name: String,
         value: String,
         include_patterns: Option<Vec<String>>,
         exclude_patterns: Option<Vec<String>>,
         index_type: Option<String>,
     },
-    Update { path: String },
+    Update { id: Option<String>, path: Option<String> },
     Remove { id: Option<String>, name: Option<String>, path: Option<String> },
     Show { expand: bool },
     Search { query: String, context_id: Option<String> },
     Clear { confirm: bool },
-    Status,
     Cancel { operation_id: String },
 }
 
@@ -68,9 +68,9 @@ pub enum ResourceOperation {
 #[derive(Debug, Clone)]
 pub enum ResourceData {
     Success(String),
+    Info(String),
     PinnedResources(PinnedResourceData),
-    IndexedResources(IndexedResourceData),
-    Status(StatusData),
+    IndexedResources(IndexedResourceData)
 }
 
 /// Pinned resources with context-specific metadata
@@ -111,6 +111,7 @@ pub struct IndexedResourceData {
 pub struct ResourceItem {
     pub id: String,
     pub name: String,
+    pub path: Option<String>,
     pub content: Option<String>,
     pub metadata: ResourceMetadata,
 }
@@ -123,28 +124,6 @@ pub struct ResourceMetadata {
     pub size: usize,
     pub resource_type: String,
     pub token_count: Option<usize>,
-}
-
-/// Status information for background operations
-#[derive(Debug, Clone, Serialize)]
-pub struct StatusData {
-    pub active_operations: Vec<OperationInfo>,
-    pub total_items: usize,
-    pub storage_info: StorageInfo,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct OperationInfo {
-    pub id: String,
-    pub operation_type: String,
-    pub status: String,
-    pub progress: Option<f32>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StorageInfo {
-    pub total_size: usize,
-    pub item_count: usize,
 }
 
 /// Output format options

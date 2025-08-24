@@ -3,7 +3,6 @@ pub mod compact;
 pub mod context;
 pub mod editor;
 pub mod hooks;
-pub mod knowledge;
 pub mod mcp;
 pub mod model;
 pub mod persist;

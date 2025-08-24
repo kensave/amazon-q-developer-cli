@@ -292,7 +292,7 @@
         },
         "id": {
           "type": "string",
-          "description": "The unique resource identifier for targeted operations. Can be obtained from 'show' command. Used for 'remove' operations to specify which resource to operate on."
+          "description": "The unique resource identifier for targeted operations. Can be obtained from 'show' command. Used for 'remove', 'update', and 'search' operations to specify which resource to operate on."
         },
         "path": {
           "type": "string",
@@ -301,10 +301,6 @@
         "query": {
           "type": "string",
           "description": "The search query string. Required for 'search' operations. Performs semantic search across indexed resources to find relevant content."
-        },
-        "resource_id": {
-          "type": "string",
-          "description": "Optional resource context for search operations. Used with 'search' command to limit search to a specific resource."
         },
         "operation_id": {
           "type": "string",

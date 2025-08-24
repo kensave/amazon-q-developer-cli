@@ -1887,33 +1887,31 @@ impl ChatSession {
         let mut tool_results = vec![];
         let mut image_blocks: Vec<RichImageBlock> = Vec::new();
 
-        for tool in &self.tool_uses {
+        let tools = std::mem::take(&mut self.tool_uses);
+        for tool in &tools {
             let tool_start = std::time::Instant::now();
-            let mut tool_telemetry = self.tool_use_telemetry_events.entry(tool.id.clone());
-            tool_telemetry = tool_telemetry.and_modify(|ev| {
-                ev.is_accepted = true;
-            });
+            
+            // Handle telemetry setup
+            {
+                let mut tool_telemetry = self.tool_use_telemetry_events.entry(tool.id.clone());
+                tool_telemetry = tool_telemetry.and_modify(|ev| {
+                    ev.is_accepted = true;
+                });
 
-            // Extract AWS service name and operation name if available
-            if let Some(additional_info) = tool.tool.get_additional_info() {
-                if let Some(aws_service_name) = additional_info.get("aws_service_name").and_then(|v| v.as_str()) {
-                    tool_telemetry =
-                        tool_telemetry.and_modify(|ev| ev.aws_service_name = Some(aws_service_name.to_string()));
-                }
-                if let Some(aws_operation_name) = additional_info.get("aws_operation_name").and_then(|v| v.as_str()) {
-                    tool_telemetry =
+                // Extract AWS service name and operation name if available
+                if let Some(additional_info) = tool.tool.get_additional_info() {
+                    if let Some(aws_service_name) = additional_info.get("aws_service_name").and_then(|v| v.as_str()) {
+                        tool_telemetry = tool_telemetry.and_modify(|ev| ev.aws_service_name = Some(aws_service_name.to_string()));
+                    }
+                    if let Some(aws_operation_name) = additional_info.get("aws_operation_name").and_then(|v| v.as_str()) {
                         tool_telemetry.and_modify(|ev| ev.aws_operation_name = Some(aws_operation_name.to_string()));
+                    }
                 }
-            }
+            } // telemetry borrow ends here
 
             let invoke_result = tool
                 .tool
-                .invoke(
-                    os,
-                    &mut self.stdout,
-                    &mut self.conversation.file_line_tracker,
-                    self.conversation.agents.get_active(),
-                )
+                .invoke(os, self)
                 .await;
 
             if self.spinner.is_some() {
@@ -1928,6 +1926,9 @@ impl ChatSession {
 
             let tool_end_time = Instant::now();
             let tool_time = tool_end_time.duration_since(tool_start);
+            
+            // Handle telemetry completion with fresh borrow
+            let mut tool_telemetry = self.tool_use_telemetry_events.entry(tool.id.clone());
             tool_telemetry = tool_telemetry.and_modify(|ev| {
                 ev.execution_duration = Some(tool_time);
                 ev.turn_duration = self.tool_turn_start_time.map(|t| tool_end_time.duration_since(t));

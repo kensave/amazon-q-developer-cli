@@ -8,9 +8,10 @@ use crossterm::{queue, style::{self, Color}};
 
 use crate::cli::agent::Agent;
 use crate::cli::chat::tools::{InvokeOutput, OutputKind, PermissionEvalResult, sanitize_path_tool_arg};
-use crate::cli::chat::resource::{ResourceOperation, StorageType, OutputFormat};
+use crate::cli::chat::resource::{ResourceOperation, StorageType, OutputFormat, ResourceData};
 use crate::cli::chat::resource::core::ResourceCore;
 use crate::cli::chat::resource::renderer::{ResourceRenderer, ToolRenderer};
+use crate::cli::chat::ChatSession;
 use crate::os::Os;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -28,8 +29,8 @@ pub enum Resource {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResourceShow {
     /// Storage type to show: "pinned", "indexed", or "all" (default: "all")
-    #[serde(default = "default_all_type", rename = "type")]
-    pub r#type: String,
+    #[serde(default = "all", rename = "type")]
+    pub r#type: StorageType,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -37,8 +38,8 @@ pub struct ResourceAdd {
     pub name: String,
     pub value: String,
     /// Storage type: "pinned" or "indexed" (default: "indexed")
-    #[serde(default = "default_indexed_type", rename = "type")]
-    pub r#type: String,
+    #[serde(default = "indexed", rename = "type")]
+    pub r#type: StorageType,
     /// Index type: "fast" (lexical search, recommended for code bases) or "best" (semantic search, recommended for documentation)
     pub index_type: Option<String>,
     /// Include patterns (e.g., `**/*.ts`, `**/*.md`) - only for indexed storage
@@ -47,8 +48,12 @@ pub struct ResourceAdd {
     pub exclude: Option<Vec<String>>,
 }
 
-fn default_indexed_type() -> String {
-    "indexed".to_string()
+fn all() -> StorageType {
+    StorageType::All
+}
+
+fn indexed() -> StorageType {
+    StorageType::Indexed
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,31 +64,30 @@ pub struct ResourceRemove {
     pub name: String,
     #[serde(default)]
     pub path: String,
-    /// Storage type: "pinned", "indexed", or "all" (default: "all")
-    #[serde(default = "default_all_type", rename = "type")]
-    pub r#type: String,
+    /// Storage type: "pinned", "all", or "all" (default: "all")
+    #[serde(default = "all", rename = "type")]
+    pub r#type: StorageType,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResourceClear {
     /// Storage type: "pinned", "indexed", or "all" (default: "all")
-    #[serde(default = "default_all_type", rename = "type")]
-    pub r#type: String,
+    #[serde(default = "all", rename = "type")]
+    pub r#type: StorageType,
 }
 
-fn default_all_type() -> String {
-    "all".to_string()
-}
+
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResourceSearch {
     pub query: String,
-    pub resource_id: Option<String>,
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResourceUpdate {
-    pub path: String,
+    pub path: Option<String>,
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +96,19 @@ pub struct ResourceCancel {
 }
 
 impl Resource {
+    // Entry point - main public interface
+    pub async fn invoke(&self, os: &Os, session: &mut ChatSession) -> Result<InvokeOutput> {
+        let operation = self.to_operation();
+        let storage_type = self.get_storage_type();
+
+        let result = self.invoke_operation(operation, storage_type, os, session).await?;
+        let renderer = ToolRenderer::new();
+        Ok(InvokeOutput {
+            output: OutputKind::Text(renderer.render(&result, OutputFormat::PlainText))
+        })
+    }
+
+    // Public interface methods
     pub fn is_enabled(_os: &Os) -> bool {
         true
     }
@@ -99,11 +116,11 @@ impl Resource {
     pub async fn validate(&mut self, os: &Os) -> Result<()> {
         match self {
             Resource::Add(add) => {
-                if !matches!(add.r#type.as_str(), "pinned" | "indexed") {
+                if !matches!(add.r#type,  StorageType::Indexed |  StorageType::Pinned) {
                     eyre::bail!("type must be either 'pinned' or 'indexed'");
                 }
                 // Validate pinned content only supports files/glob patterns
-                if add.r#type == "pinned" && add.value.contains('\n') {
+                if add.r#type == StorageType::Pinned && add.value.contains('\n') {
                     eyre::bail!("Pinned storage ONLY supports file/directory paths or glob patterns, not text content");
                 }
                 // Validate index_type if provided
@@ -111,12 +128,12 @@ impl Resource {
                     if !matches!(index_type.as_str(), "fast" | "best") {
                         eyre::bail!("index_type must be either 'fast' (lexical search for code) or 'best' (semantic search for docs)");
                     }
-                    if add.r#type != "indexed" {
+                    if add.r#type != StorageType::Indexed {
                         eyre::bail!("index_type can only be used with indexed storage");
                     }
                 }
                 // Validate patterns only work with indexed
-                if (add.include.is_some() || add.exclude.is_some()) && add.r#type != "indexed" {
+                if (add.include.is_some() || add.exclude.is_some()) && add.r#type != StorageType::Indexed {
                     eyre::bail!("include/exclude patterns can only be used with indexed storage");
                 }
                 // Check if value is a path
@@ -147,12 +164,14 @@ impl Resource {
                 }
             }
             Resource::Update(update) => {
-                if update.path.is_empty() {
-                    eyre::bail!("Path is required for update operation");
+                if update.path.is_none() && update.id.is_none() {
+                    eyre::bail!("Either path or id is required for update operation");
                 }
-                let path = sanitize_path_tool_arg(os, &update.path);
-                if !path.exists() {
-                    eyre::bail!("Path does not exist: {}", update.path);
+                if let Some(path) = &update.path {
+                    let path_buf = sanitize_path_tool_arg(os, path);
+                    if !path_buf.exists() {
+                        eyre::bail!("Path does not exist: {}", path);
+                    }
                 }
             }
             Resource::Show(show) => {
@@ -219,10 +238,17 @@ impl Resource {
                 )?;
             }
             Resource::Update(update) => {
+                let identifier = if let Some(path) = &update.path {
+                    format!("path: {}", path)
+                } else if let Some(id) = &update.id {
+                    format!("id: {}", id)
+                } else {
+                    "unknown".to_string()
+                };
                 queue!(updates,
-                    style::Print("Updating indexed resource with path: "),
+                    style::Print("Updating indexed resource with "),
                     style::SetForegroundColor(Color::Green),
-                    style::Print(&update.path),
+                    style::Print(&identifier),
                     style::ResetColor,
                 )?;
             }
@@ -247,100 +273,104 @@ impl Resource {
         Ok(())
     }
 
-    pub async fn invoke(&self, os: &Os, agent: Option<&Agent>) -> Result<InvokeOutput> {
-        let renderer = ToolRenderer::new();
-
-        let operation = match self {
-            Resource::Add(add) => {
-                ResourceOperation::Add {
-                    name: add.name.clone(),
-                    value: add.value.clone(),
-                    include_patterns: add.include.clone(),
-                    exclude_patterns: add.exclude.clone(),
-                    index_type: add.index_type.clone(),
-                }
-            }
-            Resource::Remove(remove) => {
-                ResourceOperation::Remove {
-                    id: if remove.id.is_empty() { None } else { Some(remove.id.clone()) },
-                    name: if remove.name.is_empty() { None } else { Some(remove.name.clone()) },
-                    path: if remove.path.is_empty() { None } else { Some(remove.path.clone()) },
-                }
-            }
-            Resource::Clear(_clear) => {
-                ResourceOperation::Clear { confirm: true }
-            }
-            Resource::Search(search) => {
-                ResourceOperation::Search {
-                    query: search.query.clone(),
-                    context_id: search.resource_id.clone(),
-                }
-            }
-            Resource::Update(update) => {
-                ResourceOperation::Update {
-                    path: update.path.clone(),
-                }
-            }
-            Resource::Show(_show) => {
-                ResourceOperation::Show { expand: true } // Show with status info
-            }
-            Resource::Cancel(cancel) => {
-                ResourceOperation::Cancel { operation_id: cancel.operation_id.clone() }
-            }
-        };
-
-        let storage_type = match self {
-            Resource::Add(add) => match add.r#type.as_str() {
-                "pinned" => StorageType::Pinned,
-                "indexed" => StorageType::Indexed,
-                _ => StorageType::Indexed, // default to indexed
-            },
-            Resource::Remove(remove) => match remove.r#type.as_str() {
-                "pinned" => StorageType::Pinned,
-                "indexed" => StorageType::Indexed,
-                "all" => StorageType::All,
-                _ => StorageType::All, // default to all
-            },
-            Resource::Clear(clear) => match clear.r#type.as_str() {
-                "pinned" => StorageType::Pinned,
-                "indexed" => StorageType::Indexed,
-                "all" => StorageType::All,
-                _ => StorageType::All, // default to all
-            },
-            Resource::Search(_) => StorageType::Indexed, // Search only indexed
-            Resource::Update(_) => StorageType::Indexed, // Update only indexed
-            Resource::Show(show) => match show.r#type.as_str() {
-                "pinned" => StorageType::Pinned,
-                "indexed" => StorageType::Indexed,
-                "all" => StorageType::All,
-                _ => StorageType::All, // default to all
-            },
-            Resource::Cancel(_) => StorageType::Indexed, // Cancel only indexed
-        };
-
-        let result = match storage_type {
-            StorageType::Pinned => {
-                // For tools, we don't have access to context_manager, so return error
-                return Ok(InvokeOutput {
-                    output: OutputKind::Text("Pinned resources not supported in tools".to_string()),
-                });
-            }
-            StorageType::Indexed => {
-                ResourceCore::invoke_indexed(operation, os, agent).await?
-            }
-            StorageType::All => {
-                // For tools, just show indexed resources
-                ResourceCore::invoke_indexed(ResourceOperation::Show { expand: false }, os, agent).await?
-            }
-        };
-        let output = renderer.render(&result, OutputFormat::PlainText);
-
-        Ok(InvokeOutput {
-            output: OutputKind::Text(output),
-        })
-    }
-
     pub fn permission_eval(&self, _agent: &Agent) -> PermissionEvalResult {
         PermissionEvalResult::Allow
+    }
+
+    // Private utility methods
+    fn to_operation(&self) -> ResourceOperation {
+        match self {
+            Resource::Add(add) => ResourceOperation::Add {
+                name: add.name.clone(),
+                value: add.value.clone(),
+                include_patterns: add.include.clone(),
+                exclude_patterns: add.exclude.clone(),
+                index_type: add.index_type.clone(),
+            },
+            Resource::Remove(remove) => ResourceOperation::Remove {
+                id: if remove.id.is_empty() { None } else { Some(remove.id.clone()) },
+                name: if remove.name.is_empty() { None } else { Some(remove.name.clone()) },
+                path: if remove.path.is_empty() { None } else { Some(remove.path.clone()) },
+            },
+            Resource::Clear(_) => ResourceOperation::Clear { confirm: true },
+            Resource::Search(search) => ResourceOperation::Search {
+                query: search.query.clone(),
+                context_id: search.id.clone(),
+            },
+            Resource::Update(update) => ResourceOperation::Update { 
+                id: update.id.clone(), 
+                path: update.path.clone() 
+            },
+            Resource::Show(_) => ResourceOperation::Show { expand: true },
+            Resource::Cancel(cancel) => ResourceOperation::Cancel { operation_id: cancel.operation_id.clone() },
+        }
+    }
+
+    fn get_storage_type(&self) -> StorageType {
+        match self {
+            Resource::Add(add) => add.r#type.clone(),
+            Resource::Remove(remove) => remove.r#type.clone(),
+            Resource::Clear(clear) => clear.r#type.clone(),
+            Resource::Show(show) => show.r#type.clone(),
+            _ => StorageType::Indexed, // Search, Update, Cancel only work with indexed
+        }
+    }
+
+    fn get_context_manager(session: &mut ChatSession) -> Result<&mut crate::cli::chat::context::ContextManager> {
+        session.conversation.context_manager.as_mut()
+            .ok_or_else(|| eyre::eyre!("Context manager not available"))
+    }
+
+    async fn invoke_operation(
+        &self,
+        operation: ResourceOperation,
+        storage_type: StorageType,
+        os: &Os,
+        session: &mut ChatSession
+    ) -> Result<ResourceData> {
+        match storage_type {
+            StorageType::Pinned => {
+                ResourceCore::invoke_pinned(operation, Self::get_context_manager(session)?, os).await
+            }
+            StorageType::Indexed => {
+                ResourceCore::invoke_indexed(operation, os, session.conversation.agents.get_active()).await
+            }
+            StorageType::All => {
+                self.execute_all_storage_types(operation, os, session).await
+            }
+        }
+    }
+
+    async fn execute_all_storage_types(
+        &self,
+        operation: ResourceOperation,
+        os: &Os,
+        session: &mut ChatSession
+    ) -> Result<ResourceData> {
+        let pinned_result = ResourceCore::invoke_pinned(
+            operation.clone(),
+            Self::get_context_manager(session)?,
+            os
+        ).await.ok();
+
+        let indexed_result = ResourceCore::invoke_indexed(
+            operation,
+            os,
+            session.conversation.agents.get_active()
+        ).await.ok();
+
+        match (pinned_result, indexed_result) {
+            (Some(pinned), Some(indexed)) => {
+                let renderer = ToolRenderer::new();
+                let combined = format!(
+                    "{}\n{}",
+                    renderer.render(&pinned, OutputFormat::PlainText),
+                    renderer.render(&indexed, OutputFormat::PlainText)
+                );
+                Ok(ResourceData::Success(combined))
+            }
+            (Some(result), None) | (None, Some(result)) => Ok(result),
+            (None, None) => Ok(ResourceData::Success("No resources found".to_string())),
+        }
     }
 }

@@ -43,17 +43,12 @@ impl ResourceRenderer for CliRenderer {
     fn render(&self, data: &ResourceData, _format: OutputFormat) -> String {
         match data {
             ResourceData::Success(msg) => msg.clone(),
+            ResourceData::Info(msg) => msg.clone(),
             ResourceData::PinnedResources(pinned_data) => {
                 format!("{} pinned files", pinned_data.matched_files.len())
             }
             ResourceData::IndexedResources(indexed_data) => {
                 format!("{} indexed resources", indexed_data.items.len())
-            }
-            ResourceData::Status(status) => {
-                format!("Total: {} items, {} operations",
-                    status.total_items,
-                    status.active_operations.len()
-                )
             }
         }
     }
@@ -63,22 +58,14 @@ impl ResourceRenderer for CliRenderer {
             ResourceData::Success(msg) => {
                 print_colored(session, &format!("\n{}\n\n", msg), Color::Green)?;
             }
+            ResourceData::Info(msg) => {
+                print_colored(session, &format!("\n{}\n\n", msg), Color::Yellow)?;
+            }
             ResourceData::PinnedResources(pinned_data) => {
                 self.render_pinned_resources(pinned_data, session)?;
             }
             ResourceData::IndexedResources(indexed_data) => {
                 self.render_indexed_resources(indexed_data, session)?;
-            }
-            ResourceData::Status(status) => {
-                print_colored(session, &format!("Total items: {}\n", status.total_items), Color::Green)?;
-
-                for op in &status.active_operations {
-                    execute!(session.stderr, style::Print("  "))?;
-                    print_colored(session, &op.id, Color::Blue)?;
-                    print_colored(session, " • ", Color::DarkGrey)?;
-                    print_colored(session, &op.status, Color::Yellow)?;
-                    execute!(session.stderr, style::Print("\n"))?;
-                }
             }
         }
         Ok(())
@@ -186,7 +173,7 @@ impl CliRenderer {
                 // Main entry line
                 execute!(session.stderr, style::Print("        📂 "))?;
                 execute!(session.stderr, style::SetAttribute(style::Attribute::Bold))?;
-                print_colored(session, &item.name, Color::Grey)?;
+                print_colored(session, &item.path.as_ref().unwrap_or(&item.name), Color::Grey)?;
                 print_colored(session, &format!(" ({})", &item.id[..8.min(item.id.len())]), Color::Green)?;
                 execute!(session.stderr, style::SetAttribute(style::Attribute::Reset), style::Print("\n"))?;
 
@@ -207,7 +194,20 @@ impl CliRenderer {
                 execute!(session.stderr, style::Print("           "))?;
                 print_colored(session, &format!("{} items", item.metadata.size), Color::Green)?;
                 print_colored(session, " • ", Color::DarkGrey)?;
-                print_colored(session, &item.metadata.resource_type, Color::Blue)?;
+                
+                // Extract embedding type from name format: "Name (EmbeddingType)"
+                let resource_type_display = if let Some(start) = item.name.rfind(" (") {
+                    if let Some(end) = item.name[start..].find(")") {
+                        let embedding_type = &item.name[start + 2..start + end];
+                        format!("indexed ({})", embedding_type.to_lowercase())
+                    } else {
+                        "indexed".to_string()
+                    }
+                } else {
+                    "indexed".to_string()
+                };
+                
+                print_colored(session, &resource_type_display, Color::Blue)?;
                 print_colored(session, " • ", Color::DarkGrey)?;
                 print_colored(session, &format!("{}\n", item.metadata.updated_at.format("%m/%d %H:%M")), Color::DarkGrey)?;
             }
@@ -229,19 +229,31 @@ impl ResourceRenderer for ToolRenderer {
     fn render(&self, data: &ResourceData, _format: OutputFormat) -> String {
         match data {
             ResourceData::Success(msg) => msg.clone(),
+            ResourceData::Info(msg) => msg.clone(),
             ResourceData::PinnedResources(pinned) => {
                 if pinned.session_files.is_empty() && pinned.agent_files.is_empty() {
                     "No pinned resources found.".to_string()
                 } else {
-                    let total_files = pinned.session_files.len() + pinned.agent_files.len();
-                    let mut output = format!("📌 Pinned Resources ({}):\n", total_files);
-                    if !pinned.session_files.is_empty() {
-                        output.push_str(&format!("• Session files: {} items\n", pinned.session_files.len()));
-                    }
+                    let mut output = String::new();
+                    output.push_str("📌 Pinned Resources:\n");
+                    
+                    // Agent files
                     if !pinned.agent_files.is_empty() {
-                        output.push_str(&format!("• Agent files: {} items\n", pinned.agent_files.len()));
+                        output.push_str("👤 Agent files:\n");
+                        for path in &pinned.agent_files {
+                            output.push_str(&format!("  • {} ({} matches)\n", path.path, path.match_count));
+                        }
                     }
-                    output.push_str(&format!("• Total tokens: {}", pinned.total_tokens));
+                    
+                    // Session files  
+                    if !pinned.session_files.is_empty() {
+                        output.push_str("💬 Session files:\n");
+                        for path in &pinned.session_files {
+                            output.push_str(&format!("  • {} ({} matches)\n", path.path, path.match_count));
+                        }
+                    }
+                    
+                    output.push_str(&format!("Total tokens: {}", pinned.total_tokens));
                     output
                 }
             }
@@ -255,22 +267,30 @@ impl ResourceRenderer for ToolRenderer {
                             "indexing" => " (indexing)",
                             _ => ""
                         };
-                        output.push_str(&format!("• {}{} ({} items) - Type: indexed\n", item.name, status, item.metadata.size));
+                        output.push_str(&format!("• {} ({}){}\n", item.name, &item.id[..8.min(item.id.len())], status));
+                        output.push_str(&format!("  Path: {}\n", item.name)); // Show full name/path for removal
+                        output.push_str(&format!("  {} items • {} • {}\n", 
+                            item.metadata.size, 
+                            if item.metadata.resource_type == "indexed" {
+                                // Extract embedding type from name
+                                if let Some(start) = item.name.rfind("(Some(") {
+                                    if let Some(end) = item.name[start..].find("))") {
+                                        let embedding_type = &item.name[start + 6..start + end];
+                                        format!("indexed ({})", embedding_type)
+                                    } else {
+                                        item.metadata.resource_type.clone()
+                                    }
+                                } else {
+                                    item.metadata.resource_type.clone()
+                                }
+                            } else {
+                                item.metadata.resource_type.clone()
+                            },
+                            item.metadata.updated_at.format("%m/%d %H:%M")
+                        ));
                     }
                     output
                 }
-            }
-            ResourceData::Status(status) => {
-                let mut output = format!("Status: {} items total\n", status.total_items);
-                if status.active_operations.is_empty() {
-                    output.push_str("No active operations");
-                } else {
-                    output.push_str(&format!("Active Operations ({}):\n", status.active_operations.len()));
-                    for op in &status.active_operations {
-                        output.push_str(&format!("• {} - {}\n", op.operation_type, op.status));
-                    }
-                }
-                output
             }
         }
     }

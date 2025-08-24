@@ -6,7 +6,7 @@ use crate::cli::chat::util::drop_matched_context_files;
 use crate::util::knowledge_store::KnowledgeStore;
 use crate::os::Os;
 
-use super::types::{ResourceOperation, ResourceData, ResourceItem, ResourceMetadata, StatusData, OperationInfo, StorageInfo, IndexedResourceData, PinnedResourceData, ContextPath, MatchedFile};
+use super::types::{ResourceOperation, ResourceData, ResourceItem, ResourceMetadata, IndexedResourceData, PinnedResourceData, ContextPath, MatchedFile};
 
 /// Core resource operations - shareable business logic
 pub struct ResourceCore;
@@ -47,14 +47,15 @@ impl ResourceCore {
         agent: Option<&crate::cli::agent::Agent>,
     ) -> Result<ResourceData> {
         let store = KnowledgeStore::get_async_instance(os, agent).await?;
-        
+
         match operation {
             ResourceOperation::Add { name, value, include_patterns, exclude_patterns, index_type } => {
                 let options = crate::util::knowledge_store::AddOptions::new()
                     .with_include_patterns(include_patterns.unwrap_or_default())
                     .with_exclude_patterns(exclude_patterns.unwrap_or_default())
-                    .with_embedding_type(index_type);
-                    
+                    .with_embedding_type(index_type)
+                    .merge_with_defaults(os);
+
                 let mut store_guard = store.lock().await;
                 let id = store_guard.add(&name, &value, options).await
                     .map_err(|e| eyre::eyre!("{}", e))?;
@@ -66,13 +67,25 @@ impl ResourceCore {
                     .map_err(|e| eyre::eyre!("{}", e))?;
                 Ok(ResourceData::Success(format!("Removed resource with ID: {}", id)))
             }
+            ResourceOperation::Remove { path: Some(path), .. } => {
+                let mut store_guard = store.lock().await;
+                store_guard.remove_by_path(&path).await
+                    .map_err(|e| eyre::eyre!("{}", e))?;
+                Ok(ResourceData::Success(format!("Removed resource with path: {}", path)))
+            }
             ResourceOperation::Remove { name: Some(name), .. } => {
                 let mut store_guard = store.lock().await;
                 store_guard.remove_by_name(&name).await
                     .map_err(|e| eyre::eyre!("{}", e))?;
                 Ok(ResourceData::Success(format!("Removed resource: {}", name)))
             }
-            ResourceOperation::Update { path } => {
+            ResourceOperation::Update { id: Some(id), .. } => {
+                let mut store_guard = store.lock().await;
+                let message = store_guard.update_context_by_id(&id, "").await
+                    .map_err(|e| eyre::eyre!("{}", e))?;
+                Ok(ResourceData::Success(message))
+            }
+            ResourceOperation::Update { path: Some(path), .. } => {
                 let mut store_guard = store.lock().await;
                 let message = store_guard.update_by_path(&path).await
                     .map_err(|e| eyre::eyre!("{}", e))?;
@@ -82,7 +95,7 @@ impl ResourceCore {
                 let store_guard = store.lock().await;
                 let results = store_guard.search(&query, context_id.as_deref()).await
                     .map_err(|e| eyre::eyre!("{}", e))?;
-                
+
                 if results.is_empty() {
                     Ok(ResourceData::Success(format!("No results found for: {}", query)))
                 } else {
@@ -97,9 +110,6 @@ impl ResourceCore {
             }
             ResourceOperation::Show { .. } => {
                 Self::get_indexed_resources(store).await
-            }
-            ResourceOperation::Status => {
-                Self::get_status(store).await
             }
             ResourceOperation::Clear { .. } => {
                 let mut store_guard = store.lock().await;
@@ -123,7 +133,7 @@ impl ResourceCore {
             .paths
             .iter()
             .partition::<Vec<_>, _>(|p| matches!(**p, ContextFilePath::Agent(_)));
-        
+
         let mut agent_files = Vec::new();
         for path in &agent_owned_list {
             let context_files = context_manager
@@ -141,7 +151,7 @@ impl ResourceCore {
                     .extend(context_files.into_iter().map(|(path, content)| (path, content, false)));
             }
         }
-        
+
         let mut session_files = Vec::new();
         for path in &session_owned_list {
             let context_files = context_manager
@@ -159,7 +169,7 @@ impl ResourceCore {
                     .extend(context_files.into_iter().map(|(path, content)| (path, content, true)));
             }
         }
-        
+
         let matched_files: Vec<MatchedFile> = profile_context_files.into_iter().map(|(path, content, is_temporary)| {
             let tokens = TokenCounter::count_tokens(&content);
             MatchedFile {
@@ -169,7 +179,7 @@ impl ResourceCore {
                 is_temporary,
             }
         }).collect();
-        
+
         let total_tokens = matched_files.iter().map(|f| f.tokens).sum();
         let context_files_max_size = calc_max_context_files_size(None);
         let mut files_as_vec = matched_files
@@ -177,7 +187,7 @@ impl ResourceCore {
             .map(|f| (f.filename.clone(), f.content.clone()))
             .collect::<Vec<_>>();
         let dropped_files = drop_matched_context_files(&mut files_as_vec, context_files_max_size).ok();
-        
+
         let pinned_data = PinnedResourceData {
             agent_files,
             session_files,
@@ -186,7 +196,7 @@ impl ResourceCore {
             dropped_files,
             context_files_max_size,
         };
-        
+
         Ok(ResourceData::PinnedResources(pinned_data))
     }
 
@@ -196,12 +206,13 @@ impl ResourceCore {
             .map_err(|e| eyre::eyre!("{}", e))?;
         let status = store_guard.get_status_data().await
             .map_err(|e| eyre::eyre!("{}", e))?;
-        
+
         let mut items: Vec<ResourceItem> = contexts.into_iter().map(|ctx| {
             ResourceItem {
                 id: ctx.id.clone(),
                 name: format!("{} ({:?})", ctx.name, ctx.embedding_type),
                 content: Some(ctx.description),
+                path: ctx.source_path,
                 metadata: ResourceMetadata {
                     created_at: ctx.created_at,
                     updated_at: ctx.updated_at,
@@ -211,7 +222,7 @@ impl ResourceCore {
                 },
             }
         }).collect();
-        
+
         // Add in-progress operations
         for op in status.operations {
             if !op.is_cancelled {
@@ -221,10 +232,11 @@ impl ResourceCore {
                     let eta_secs = (elapsed * remaining) / op.current;
                     format!(" (ETA: {}s)", eta_secs)
                 } else { String::new() };
-                
+
                 items.push(ResourceItem {
                     id: op.id.clone(),
                     name: format!("{} - indexing{}", op.message, eta),
+                    path: None,
                     content: None,
                     metadata: ResourceMetadata {
                         created_at: op.started_at.into(),
@@ -236,36 +248,8 @@ impl ResourceCore {
                 });
             }
         }
-        
+
         Ok(ResourceData::IndexedResources(IndexedResourceData { items }))
     }
 
-    async fn get_status(store: std::sync::Arc<tokio::sync::Mutex<KnowledgeStore>>) -> Result<ResourceData> {
-        let store_guard = store.lock().await;
-        let status = store_guard.get_status_data().await
-            .map_err(|e| eyre::eyre!("{}", e))?;
-        
-        let status_data = StatusData {
-            active_operations: status.operations.into_iter().map(|op| {
-                OperationInfo {
-                    id: op.short_id,
-                    operation_type: op.operation_type.display_name().to_string(),
-                    status: if op.is_cancelled { "Cancelled".to_string() }
-                           else if op.is_failed { "Failed".to_string() }
-                           else if op.is_waiting { "Waiting".to_string() }
-                           else { "In Progress".to_string() },
-                    progress: if op.total > 0 { 
-                        Some(op.current as f32 / op.total as f32 * 100.0) 
-                    } else { None },
-                }
-            }).collect(),
-            total_items: status.total_contexts,
-            storage_info: StorageInfo {
-                total_size: 0,
-                item_count: status.total_contexts,
-            },
-        };
-        
-        Ok(ResourceData::Status(status_data))
-    }
 }

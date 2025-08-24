@@ -66,7 +66,7 @@ use crate::cli::agent::hook::{
 use crate::database::settings::Setting;
 use crate::os::Os;
 use crate::util::{
-    self,
+    knowledge_store::{AddOptions, KnowledgeStore},
     MCP_SERVER_TOOL_DELIMITER,
     directories,
 };
@@ -85,9 +85,9 @@ pub enum AgentConfigError {
         error: Box<jsonschema::ValidationError<'static>>,
     },
     #[error("Encountered directory error: {0}")]
-    Directories(#[from] util::directories::DirectoryError),
+    Directories(#[from] directories::DirectoryError),
     #[error("Encountered io error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
     #[error("Failed to parse legacy mcp config: {0}")]
     BadLegacyMcpConfig(#[from] eyre::Report),
 }
@@ -208,7 +208,7 @@ impl Agent {
     /// This function mutates the agent to a state that is usable for runtime.
     /// Practically this means to convert some of the fields value to their usable counterpart.
     /// For example, converting the mcp array to actual mcp config and populate the agent file path.
-    fn thaw(&mut self, path: &Path, legacy_mcp_config: Option<&McpServerConfig>) -> Result<(), AgentConfigError> {
+    async fn thaw(&mut self, path: &Path, legacy_mcp_config: Option<&McpServerConfig>) -> Result<(), AgentConfigError> {
         let Self { mcp_servers, .. } = self;
 
         self.path = Some(path.to_path_buf());
@@ -275,7 +275,7 @@ impl Agent {
                     None
                 };
 
-                agent.thaw(&config_path, legacy_mcp_config.as_ref())?;
+                agent.thaw(&config_path, legacy_mcp_config.as_ref()).await?;
                 Ok((agent, config_path))
             },
             _ => bail!("Agent {agent_name} does not exist"),
@@ -300,7 +300,7 @@ impl Agent {
             }
         }
 
-        agent.thaw(agent_path.as_ref(), legacy_mcp_config.as_ref())?;
+        agent.thaw(agent_path.as_ref(), legacy_mcp_config.as_ref()).await?;
         Ok(agent)
     }
 }
@@ -644,6 +644,13 @@ impl Agents {
             .collect::<HashMap<_, _>>();
         let active_agent = agents.get(&active_idx);
 
+        // Sync resources for the active agent only
+        if let Some(agent) = agents.get(&active_idx) {
+            if let Err(e) = sync_resources_for_agent(&mut agent.clone(), os).await {
+                println!("⚠️  Failed to sync resources for active agent {}: {}", active_idx, e);
+            }
+        }
+
         'validate: {
             match (serde_json::to_value(schema), active_agent) {
                 (Ok(schema), Some(agent)) => {
@@ -803,6 +810,161 @@ async fn load_legacy_mcp_config(os: &Os) -> eyre::Result<Option<McpServerConfig>
     })
 }
 
+async fn sync_resources_for_agent(agent: &mut Agent, os: &Os) -> Result<(), AgentConfigError> {
+    println!("🔄 Starting resource sync for agent: {}", agent.name);
+    
+    // Get current indexed resources from agent config
+    let current_indexed_resources: Vec<_> = agent.resources.iter().enumerate()
+        .filter_map(|(i, resource)| {
+            match resource {
+                ResourcePath::Complex(def) if matches!(def.resource_type, wrapper_types::ResourceType::Indexed) => {
+                    println!("📋 Found indexed resource {}: '{}' ({})", i, def.source, def.name.as_deref().unwrap_or("unnamed"));
+                    
+                    // Strip file:// protocol and resolve path
+                    let file_path = if def.source.starts_with("file://") {
+                        def.source.trim_start_matches("file://")
+                    } else {
+                        &def.source
+                    };
+                    
+                    let resolved_path = if !file_path.starts_with('/') {
+                        let current_dir = std::env::current_dir().unwrap_or_default();
+                        current_dir.join(file_path).display().to_string()
+                    } else {
+                        file_path.to_string()
+                    };
+                    
+                    Some((
+                        def.name.as_deref().unwrap_or("unnamed"),
+                        def.description.as_deref().unwrap_or_else(|| def.name.as_deref().unwrap_or("unnamed")),
+                        resolved_path
+                    ))
+                }
+                ResourcePath::Complex(def) => {
+                    println!("⏭️  Skipping non-indexed resource {}: '{}' (type: {:?})", i, def.source, def.resource_type);
+                    None
+                }
+                ResourcePath::Simple(source) => {
+                    println!("⏭️  Skipping simple resource {}: '{}' (handled by existing context system)", i, source);
+                    None
+                }
+            }
+        })
+        .collect();
+    
+    if current_indexed_resources.is_empty() {
+        println!("⚠️  No indexed resources in agent config");
+    } else {
+        println!("📊 Found {} indexed resources in config", current_indexed_resources.len());
+    }
+    
+    let knowledge_store_arc = KnowledgeStore::get_async_instance(os, Some(agent)).await
+        .map_err(|e| {
+            println!("❌ Failed to get KnowledgeStore instance: {}", e);
+            AgentConfigError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+        })?;
+    let mut knowledge_store = knowledge_store_arc.lock().await;
+
+    // Get existing contexts from knowledge store
+    let existing_contexts = match knowledge_store.get_all().await {
+        Ok(contexts) => contexts,
+        Err(e) => {
+            println!("⚠️  Could not get existing contexts: {}, skipping cleanup", e);
+            vec![]
+        }
+    };
+
+    // Remove contexts that are no longer in agent config
+    for ctx in &existing_contexts {
+        let still_exists = current_indexed_resources.iter().any(|(name, _description, path)| {
+            ctx.name == *name || ctx.source_path.as_deref() == Some(path)
+        });
+        
+        if !still_exists {
+            println!("🗑️  Removing resource '{}' (no longer in agent config)", ctx.name);
+            if let Err(e) = knowledge_store.remove_by_name(&ctx.name).await {
+                println!("❌ Failed to remove resource '{}': {}", ctx.name, e);
+            } else {
+                println!("✅ Successfully removed resource '{}'", ctx.name);
+            }
+        }
+    }
+
+    // Add new resources that don't exist yet
+    for (name, description, resolved_path) in current_indexed_resources {
+        let already_exists = existing_contexts.iter().any(|ctx| {
+            ctx.name == name || ctx.source_path.as_deref() == Some(&resolved_path)
+        });
+        
+        if already_exists {
+            println!("⏭️  Resource '{}' already exists in knowledge store, skipping", name);
+            continue;
+        }
+        
+        // Find the original definition to get include/exclude/index_type
+        let def = agent.resources.iter()
+            .filter_map(|r| match r {
+                ResourcePath::Complex(d) if d.name.as_deref().unwrap_or("unnamed") == name => Some(d),
+                _ => None
+            })
+            .next();
+        
+        // Use combined name and description for display
+        let display_name = match (name, description) {
+            (n, d) if n != d => {
+                // Truncate description if too long
+                let truncated_desc = if d.len() > 60 {
+                    format!("{}...", &d[..57])
+                } else {
+                    d.to_string()
+                };
+                format!("{} • {}", n, truncated_desc)
+            }
+            (n, _) => n.to_string(), // Same or no description, just use name
+        };
+        
+        println!("🔗 Adding new resource '{}' -> '{}'", display_name, resolved_path);
+        
+        let mut options = AddOptions::new();
+        
+        if let Some(def) = def {
+            // Set include patterns
+            if let Some(include) = &def.include {
+                options.include_patterns = vec![include.clone()];
+                println!("  📥 Include: {}", include);
+            }
+            
+            // Set exclude patterns  
+            if let Some(exclude) = &def.exclude {
+                options.exclude_patterns = vec![exclude.clone()];
+                println!("  📤 Exclude: {}", exclude);
+            }
+            
+            // Set embedding type based on index_type
+            if let Some(index_type) = &def.index_type {
+                let embedding_type = match index_type {
+                    wrapper_types::IndexType::Fast => "fast",
+                    wrapper_types::IndexType::Best => "best",
+                };
+                options.embedding_type = Some(embedding_type.to_string());
+                println!("  🎯 Index type: {:?} -> {}", index_type, embedding_type);
+            }
+        }
+        
+        match knowledge_store.add(&display_name, &resolved_path, options).await {
+            Ok(result) => {
+                println!("✅ Successfully added indexed resource '{}' to knowledge store: {}", display_name, result);
+            }
+            Err(e) => {
+                println!("❌ Failed to add indexed resource '{}' to knowledge store: {}", display_name, e);
+            }
+        }
+    }
+    
+    println!("🎉 Completed indexed resource sync for agent: {}", agent.name);
+    Ok(())
+}
+
 fn default_schema() -> String {
     "https://raw.githubusercontent.com/aws/amazon-q-developer-cli/refs/heads/main/schemas/agent-v1.json".into()
 }
@@ -838,21 +1000,21 @@ mod tests {
                 "fetch": { "command": "fetch3.1", "args": [] },
                 "git": { "command": "git-mcp", "args": [] }
               },
-              "tools": [                                    
+              "tools": [
                 "@git"
               ],
               "toolAliases": {
                   "@gits/some_tool": "some_tool2"
               },
-              "allowedTools": [                           
-                "fs_read",                               
+              "allowedTools": [
+                "fs_read",
                 "@fetch",
                 "@gits/git_status"
               ],
-              "resources": [                        
+              "resources": [
                 "file://~/my-genai-prompts/unittest.md"
               ],
-              "toolsSettings": {                     
+              "toolsSettings": {
                 "fs_write": { "allowedPaths": ["~/**"] },
                 "@git/git_status": { "git_user": "$GIT_USER" }
               }
@@ -941,5 +1103,60 @@ mod tests {
         assert!(validate_agent_name("_invalid").is_err());
         assert!(validate_agent_name("invalid!").is_err());
         assert!(validate_agent_name("invalid space").is_err());
+    }
+
+    #[test]
+    fn test_resource_path_parsing() {
+        // Test complex resource
+        let complex_json = r#"{
+            "source": "file:///path/to/resource",
+            "name": "Test Resource",
+            "type": "indexed",
+            "description": "Test description",
+            "index_type": "best"
+        }"#;
+
+        let complex: wrapper_types::ResourcePath = serde_json::from_str(complex_json).expect("Should parse complex resource");
+        match complex {
+            wrapper_types::ResourcePath::Complex(def) => {
+                assert_eq!(def.source, "file:///path/to/resource");
+                assert_eq!(def.name, Some("Test Resource".to_string()));
+                assert!(matches!(def.resource_type, wrapper_types::ResourceType::Indexed));
+            }
+            _ => panic!("Should be complex resource"),
+        }
+
+        // Test simple resource
+        let simple_json = r#""file:///simple/path""#;
+        let simple: wrapper_types::ResourcePath = serde_json::from_str(simple_json).expect("Should parse simple resource");
+        match simple {
+            wrapper_types::ResourcePath::Simple(path) => {
+                assert_eq!(path, "file:///simple/path");
+            }
+            _ => panic!("Should be simple resource"),
+        }
+
+        // Test mixed array (the real-world case)
+        let mixed_array_json = r#"[
+            "file://AmazonQ.md",
+            "file://README.md",
+            {
+                "source": "file:///path/to/resource",
+                "name": "Test Resource",
+                "type": "indexed",
+                "description": "Test description",
+                "index_type": "best"
+            }
+        ]"#;
+
+        let mixed: Vec<wrapper_types::ResourcePath> = serde_json::from_str(mixed_array_json).expect("Should parse mixed array");
+        assert_eq!(mixed.len(), 3);
+
+        // First two should be simple
+        assert!(matches!(mixed[0], wrapper_types::ResourcePath::Simple(_)));
+        assert!(matches!(mixed[1], wrapper_types::ResourcePath::Simple(_)));
+
+        // Third should be complex
+        assert!(matches!(mixed[2], wrapper_types::ResourcePath::Complex(_)));
     }
 }

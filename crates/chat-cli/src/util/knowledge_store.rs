@@ -33,46 +33,6 @@ impl AddOptions {
         Self::default()
     }
 
-    /// Create AddOptions with DB default patterns
-    pub fn with_db_defaults(os: &crate::os::Os) -> Self {
-        let default_include = os
-            .database
-            .settings
-            .get(crate::database::settings::Setting::KnowledgeDefaultIncludePatterns)
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        let default_exclude = os
-            .database
-            .settings
-            .get(crate::database::settings::Setting::KnowledgeDefaultExcludePatterns)
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        let default_embedding_type = os
-            .database
-            .settings
-            .get(crate::database::settings::Setting::KnowledgeIndexType)
-            .and_then(|v| v.as_str().map(|s| s.to_string()));
-
-        Self {
-            description: None,
-            include_patterns: default_include,
-            exclude_patterns: default_exclude,
-            embedding_type: default_embedding_type,
-        }
-    }
-
     pub fn with_include_patterns(mut self, patterns: Vec<String>) -> Self {
         self.include_patterns = patterns;
         self
@@ -87,6 +47,54 @@ impl AddOptions {
         self.embedding_type = embedding_type;
         self
     }
+
+    /// Create AddOptions with DB default patterns
+    pub fn with_db_defaults(os: &crate::os::Os) -> Self {
+        let default_include = get_default_patterns(os, crate::database::settings::Setting::KnowledgeDefaultIncludePatterns);
+        let default_exclude = get_default_patterns(os, crate::database::settings::Setting::KnowledgeDefaultExcludePatterns);
+        let default_embedding_type = get_default_string(os, crate::database::settings::Setting::KnowledgeIndexType);
+
+        Self {
+            description: None,
+            include_patterns: default_include,
+            exclude_patterns: default_exclude,
+            embedding_type: default_embedding_type,
+        }
+    }
+
+    /// Merge user-provided options with database defaults
+    pub fn merge_with_defaults(self, os: &crate::os::Os) -> Self {
+        let defaults = Self::with_db_defaults(os);
+        
+        Self {
+            description: self.description,
+            include_patterns: if self.include_patterns.is_empty() { defaults.include_patterns } else { self.include_patterns },
+            exclude_patterns: if self.exclude_patterns.is_empty() { defaults.exclude_patterns } else { self.exclude_patterns },
+            embedding_type: self.embedding_type.or(defaults.embedding_type),
+        }
+    }
+}
+
+/// Utility function to get default string patterns from database settings
+fn get_default_patterns(os: &crate::os::Os, setting: crate::database::settings::Setting) -> Vec<String> {
+    os.database
+        .settings
+        .get(setting)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+/// Utility function to get default string value from database settings
+fn get_default_string(os: &crate::os::Os, setting: crate::database::settings::Setting) -> Option<String> {
+    os.database
+        .settings
+        .get(setting)
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
 }
 
 #[derive(Debug)]
@@ -116,8 +124,8 @@ impl KnowledgeStore {
         os: &Os,
         agent: Option<&crate::cli::Agent>,
     ) -> Result<Arc<Mutex<Self>>, directories::DirectoryError> {
-        static ASYNC_INSTANCE: Lazy<tokio::sync::Mutex<Option<Arc<Mutex<KnowledgeStore>>>>> =
-            Lazy::new(|| tokio::sync::Mutex::new(None));
+        static ASYNC_INSTANCE: Lazy<Mutex<Option<Arc<Mutex<KnowledgeStore>>>>> =
+            Lazy::new(|| Mutex::new(None));
 
         if cfg!(test) {
             // For tests, create a new instance each time
@@ -126,10 +134,10 @@ impl KnowledgeStore {
                 .map_err(|_e| directories::DirectoryError::Io(std::io::Error::other("Failed to create store")))?;
             Ok(Arc::new(Mutex::new(store)))
         } else {
-            let current_agent_dir = crate::util::directories::agent_knowledge_dir(os, agent)?;
-            
+            let current_agent_dir = directories::agent_knowledge_dir(os, agent)?;
+
             let mut instance_guard = ASYNC_INSTANCE.lock().await;
-            
+
             let needs_reinit = match instance_guard.as_ref() {
                 None => true,
                 Some(store) => {
@@ -137,7 +145,7 @@ impl KnowledgeStore {
                     store_guard.agent_dir != current_agent_dir
                 }
             };
-            
+
             if needs_reinit {
                 // Check for migration before initializing the client
                 Self::migrate_legacy_knowledge_base(&current_agent_dir).await;
@@ -147,7 +155,7 @@ impl KnowledgeStore {
                     .map_err(|_e| directories::DirectoryError::Io(std::io::Error::other("Failed to create store")))?;
                 *instance_guard = Some(Arc::new(Mutex::new(store)));
             }
-            
+
             Ok(instance_guard.as_ref().unwrap().clone())
         }
     }
@@ -256,14 +264,14 @@ impl KnowledgeStore {
     }
 
     /// Create instance with database settings from OS
-    async fn new_with_os_settings(os: &crate::os::Os, agent: Option<&crate::cli::Agent>) -> Result<Self> {
-        let agent_dir = crate::util::directories::agent_knowledge_dir(os, agent)?;
+    async fn new_with_os_settings(os: &Os, agent: Option<&crate::cli::Agent>) -> Result<Self> {
+        let agent_dir = directories::agent_knowledge_dir(os, agent)?;
         let agent_config = Self::create_config_from_db_settings(os, agent_dir.clone());
         let agent_client = AsyncSemanticSearchClient::with_config(&agent_dir, agent_config)
             .await
             .map_err(|e| eyre::eyre!("Failed to create agent client at {}: {}", agent_dir.display(), e))?;
 
-        let store = Self { 
+        let store = Self {
             agent_client,
             agent_dir,
         };
@@ -280,7 +288,7 @@ impl KnowledgeStore {
         // Use provided description or generate default
         let description = options
             .description
-            .unwrap_or_else(|| format!("Knowledge context for {}", name));
+            .unwrap_or_else(|| format!("{}", name));
 
         // Create AddContextRequest with all options
         let request = AddContextRequest {
@@ -433,6 +441,7 @@ impl KnowledgeStore {
     }
 
     /// Clear all contexts (background operation)
+    #[allow(dead_code)]
     pub async fn clear(&mut self) -> Result<String, String> {
         match self.agent_client.clear_all().await {
             Ok((operation_id, _cancel_token)) => Ok(format!(
@@ -541,27 +550,6 @@ impl KnowledgeStore {
         self.add(&context_name, path_str, options).await
     }
 
-    /// Update context by name
-    pub async fn update_context_by_name(&mut self, name: &str, path_str: &str) -> Result<String, String> {
-        if let Some(context) = self.agent_client.get_context_by_name(name).await {
-            // Remove the existing context first
-            self.agent_client
-                .remove_context_by_id(&context.id)
-                .await
-                .map_err(|e| e.to_string())?;
-
-            // Then add it back with the same name and original patterns (agent scope)
-            let options = AddOptions {
-                description: None,
-                include_patterns: context.include_patterns.clone(),
-                exclude_patterns: context.exclude_patterns.clone(),
-                embedding_type: None,
-            };
-            self.add(name, path_str, options).await
-        } else {
-            Err(format!("Context with name '{}' not found", name))
-        }
-    }
 }
 
 #[cfg(test)]

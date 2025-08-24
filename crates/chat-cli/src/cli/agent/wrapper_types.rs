@@ -90,34 +90,75 @@ pub fn tool_settings_schema(generator: &mut SchemaGenerator) -> Schema {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, Hash, PartialEq, JsonSchema)]
-pub struct ResourcePath(
-    // You can extend this list via "|". e.g. r"^(file://|database://)"
-    #[schemars(regex(pattern = r"^(file://)"))]
-    String,
-);
+#[serde(rename_all = "kebab-case")]
+pub enum ResourceType {
+    Pinned,
+    OnDemand,
+    Indexed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, Hash, PartialEq, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum IndexType {
+    Fast,
+    Best,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, Hash, PartialEq, JsonSchema)]
+pub struct ResourceDefinition {
+    pub source: String,
+    #[serde(rename = "type")]
+    pub resource_type: ResourceType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index_type: Option<IndexType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, Hash, PartialEq, JsonSchema)]
+#[serde(untagged)]
+pub enum ResourcePath {
+    Complex(ResourceDefinition),
+    Simple(String),
+}
+
+impl ResourcePath {
+    pub fn source(&self) -> &str {
+        match self {
+            ResourcePath::Complex(def) => &def.source,
+            ResourcePath::Simple(s) => s,
+        }
+    }
+}
 
 impl Deref for ResourcePath {
-    type Target = String;
+    type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        self.source()
     }
 }
 
 impl Borrow<str> for ResourcePath {
     fn borrow(&self) -> &str {
-        self.0.as_str()
+        self.source()
     }
 }
 
 impl From<&str> for ResourcePath {
     fn from(value: &str) -> Self {
-        Self(value.to_string())
+        ResourcePath::Simple(value.to_string())
     }
 }
 
 impl From<String> for ResourcePath {
     fn from(value: String) -> Self {
-        Self(value)
+        ResourcePath::Simple(value)
     }
 }
