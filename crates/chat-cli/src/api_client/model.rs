@@ -97,6 +97,7 @@ pub struct ConversationState {
     pub conversation_id: Option<String>,
     pub user_input_message: UserInputMessage,
     pub history: Option<Vec<ChatMessage>>,
+    pub agent_continuation_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -563,6 +564,12 @@ pub enum ChatResponseStream {
         conversation_id: Option<String>,
         utterance_id: Option<String>,
     },
+    MetadataEvent {
+        total_tokens: Option<i32>,
+    },
+    MeteringEvent {
+        usage: Option<f64>,
+    },
     SupplementaryWebLinksEvent(()),
     ToolUseEvent {
         tool_use_id: String,
@@ -609,6 +616,23 @@ impl From<amzn_codewhisperer_streaming_client::types::ChatResponseStream> for Ch
                 conversation_id,
                 utterance_id,
             },
+            amzn_codewhisperer_streaming_client::types::ChatResponseStream::MetadataEvent(
+                amzn_codewhisperer_streaming_client::types::MetadataEvent { token_usage, .. },
+            ) => {
+                println!(
+                    "DEBUG: Codewhisperer MetadataEvent matched! token_usage: {:?}",
+                    token_usage
+                );
+                ChatResponseStream::MetadataEvent {
+                    total_tokens: token_usage.map(|t| t.total_tokens),
+                }
+            },
+            amzn_codewhisperer_streaming_client::types::ChatResponseStream::MeteringEvent(
+                amzn_codewhisperer_streaming_client::types::MeteringEvent { usage, .. },
+            ) => {
+                println!("DEBUG: Codewhisperer MeteringEvent matched! usage: {:?}", usage);
+                ChatResponseStream::MeteringEvent { usage }
+            },
             amzn_codewhisperer_streaming_client::types::ChatResponseStream::ToolUseEvent(
                 amzn_codewhisperer_streaming_client::types::ToolUseEvent {
                     tool_use_id,
@@ -626,7 +650,10 @@ impl From<amzn_codewhisperer_streaming_client::types::ChatResponseStream> for Ch
             amzn_codewhisperer_streaming_client::types::ChatResponseStream::SupplementaryWebLinksEvent(_) => {
                 ChatResponseStream::SupplementaryWebLinksEvent(())
             },
-            _ => ChatResponseStream::Unknown,
+            other => {
+                println!("DEBUG: Codewhisperer catch-all - Unknown event: {:?}", other);
+                ChatResponseStream::Unknown
+            },
         }
     }
 }
@@ -665,6 +692,23 @@ impl From<amzn_qdeveloper_streaming_client::types::ChatResponseStream> for ChatR
                 conversation_id,
                 utterance_id,
             },
+            amzn_qdeveloper_streaming_client::types::ChatResponseStream::MetadataEvent(
+                amzn_qdeveloper_streaming_client::types::MetadataEvent { token_usage, .. },
+            ) => {
+                println!(
+                    "DEBUG: QDeveloper MetadataEvent matched! token_usage: {:?}",
+                    token_usage
+                );
+                ChatResponseStream::MetadataEvent {
+                    total_tokens: token_usage.map(|t| t.total_tokens),
+                }
+            },
+            amzn_qdeveloper_streaming_client::types::ChatResponseStream::MeteringEvent(
+                amzn_qdeveloper_streaming_client::types::MeteringEvent { usage, .. },
+            ) => {
+                println!("DEBUG: QDeveloper MeteringEvent matched! usage: {:?}", usage);
+                ChatResponseStream::MeteringEvent { usage }
+            },
             amzn_qdeveloper_streaming_client::types::ChatResponseStream::ToolUseEvent(
                 amzn_qdeveloper_streaming_client::types::ToolUseEvent {
                     tool_use_id,
@@ -682,7 +726,10 @@ impl From<amzn_qdeveloper_streaming_client::types::ChatResponseStream> for ChatR
             amzn_qdeveloper_streaming_client::types::ChatResponseStream::SupplementaryWebLinksEvent(_) => {
                 ChatResponseStream::SupplementaryWebLinksEvent(())
             },
-            _ => ChatResponseStream::Unknown,
+            other => {
+                println!("DEBUG: Codewhisperer catch-all - Unknown event: {:?}", other);
+                ChatResponseStream::Unknown
+            },
         }
     }
 }
@@ -870,7 +917,7 @@ impl From<UserInputMessage> for amzn_codewhisperer_streaming_client::types::User
             .set_user_input_message_context(value.user_input_message_context.map(Into::into))
             .set_user_intent(value.user_intent.map(Into::into))
             .set_model_id(value.model_id)
-            .origin(amzn_codewhisperer_streaming_client::types::Origin::Cli)
+            .origin(amzn_codewhisperer_streaming_client::types::Origin::AiEditor)
             .build()
             .expect("Failed to build UserInputMessage")
     }
@@ -884,7 +931,7 @@ impl From<UserInputMessage> for amzn_qdeveloper_streaming_client::types::UserInp
             .set_user_input_message_context(value.user_input_message_context.map(Into::into))
             .set_user_intent(value.user_intent.map(Into::into))
             .set_model_id(value.model_id)
-            .origin(amzn_qdeveloper_streaming_client::types::Origin::Cli)
+            .origin(amzn_qdeveloper_streaming_client::types::Origin::AiEditor)
             .build()
             .expect("Failed to build UserInputMessage")
     }

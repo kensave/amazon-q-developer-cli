@@ -27,6 +27,7 @@ use tracing::{
     debug,
     warn,
 };
+use uuid;
 
 use super::cli::compact::CompactStrategy;
 use super::cli::hooks::HookOutput;
@@ -149,6 +150,9 @@ pub struct ConversationState {
     /// Tangent mode checkpoint - stores main conversation when in tangent mode
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tangent_state: Option<ConversationCheckpoint>,
+    /// Current continuation ID for billing tracking - generated per conversation turn
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    current_continuation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +216,7 @@ impl ConversationState {
             checkpoint_manager: None,
             mcp_enabled,
             tangent_state: None,
+            current_continuation_id: None,
         }
     }
 
@@ -376,6 +381,12 @@ impl ConversationState {
 
     pub fn reset_next_user_message(&mut self) {
         self.next_message = None;
+        // Don't clear continuation_id here - it should persist for the entire turn
+    }
+
+    /// Returns the current continuation ID for billing tracking
+    pub fn continuation_id(&self) -> Option<&str> {
+        self.current_continuation_id.as_deref()
     }
 
     pub async fn set_next_user_message(&mut self, input: String) {
@@ -390,6 +401,10 @@ impl ConversationState {
         } else {
             input
         };
+
+        // Generate new continuation ID for this turn
+        let new_continuation_id = uuid::Uuid::new_v4().to_string();
+        self.current_continuation_id = Some(new_continuation_id);
 
         let msg = UserMessage::new_prompt(input, Some(Local::now().fixed_offset()));
         self.next_message = Some(msg);
@@ -614,6 +629,7 @@ impl ConversationState {
             dropped_context_files,
             tools: &self.tools,
             model_id: self.model_info.as_ref().map(|m| m.model_id.as_str()),
+            continuation_id: self.current_continuation_id.as_deref(),
         })
     }
 
@@ -719,6 +735,7 @@ impl ConversationState {
                 .unwrap_or(UserMessage::new_prompt(summary_content, None)) // should not happen
                 .into_user_input_message(self.model_info.as_ref().map(|m| m.model_id.clone()), &tools),
             history: Some(flatten_history(history.iter())),
+            agent_continuation_id: self.current_continuation_id.clone(),
         })
     }
 
@@ -777,6 +794,7 @@ Return only the JSON configuration, no additional text.",
             conversation_id: Some(self.conversation_id.clone()),
             user_input_message: generation_message.into_user_input_message(self.model.clone(), &tools),
             history: Some(flatten_history(history.iter())),
+            agent_continuation_id: self.current_continuation_id.clone(),
         })
     }
 
@@ -957,6 +975,9 @@ Return only the JSON configuration, no additional text.",
     }
 }
 
+#[cfg(test)]
+mod continuation_tests;
+
 pub fn format_tool_spec(tool_spec: HashMap<String, ToolSpec>) -> HashMap<ToolOrigin, Vec<Tool>> {
     tool_spec
         .into_values()
@@ -992,6 +1013,7 @@ pub struct BackendConversationStateImpl<'a, T, U> {
     pub dropped_context_files: Vec<(String, String)>,
     pub tools: &'a HashMap<ToolOrigin, Vec<Tool>>,
     pub model_id: Option<&'a str>,
+    pub continuation_id: Option<&'a str>,
 }
 
 impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, HistoryEntry>, Option<Vec<HistoryEntry>>> {
@@ -1007,6 +1029,7 @@ impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, Hist
             conversation_id: Some(self.conversation_id.to_string()),
             user_input_message,
             history: Some(history),
+            agent_continuation_id: self.continuation_id.map(str::to_string),
         })
     }
 

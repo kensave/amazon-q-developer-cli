@@ -2669,7 +2669,7 @@ impl ChatSession {
         );
         let mut response_prefix_printed = false;
 
-        let mut tool_uses = Vec::new();
+        let mut tool_uses: Vec<AssistantToolUse> = Vec::new();
         let mut tool_name_being_recvd: Option<String> = None;
 
         if self.spinner.is_some() {
@@ -2954,6 +2954,16 @@ impl ChatSession {
 
                 queue!(self.stderr, style::ResetColor, style::SetAttribute(Attribute::Reset))?;
                 execute!(self.stdout, style::Print("\n"))?;
+
+                // Display continuation ID if available
+                if let Some(continuation_id) = self.conversation.continuation_id() {
+                    queue!(
+                        self.stdout,
+                        style::SetForegroundColor(Color::DarkGrey),
+                        style::Print(format!("({})\n", continuation_id)),
+                        style::SetForegroundColor(Color::Reset)
+                    )?;
+                }
 
                 for (i, citation) in &state.citations {
                     queue!(
@@ -3693,6 +3703,31 @@ fn does_input_reference_file(input: &str) -> Option<ChatState> {
     None
 }
 
+// Helper method to save the agent config to file
+async fn save_agent_config(os: &mut Os, config: &Agent, agent_name: &str, is_global: bool) -> Result<(), ChatError> {
+    let config_dir = if is_global {
+        directories::chat_global_agent_path(os)
+            .map_err(|e| ChatError::Custom(format!("Could not find global agent directory: {}", e).into()))?
+    } else {
+        directories::chat_local_agent_dir(os)
+            .map_err(|e| ChatError::Custom(format!("Could not find local agent directory: {}", e).into()))?
+    };
+
+    tokio::fs::create_dir_all(&config_dir)
+        .await
+        .map_err(|e| ChatError::Custom(format!("Failed to create config directory: {}", e).into()))?;
+
+    let config_file = config_dir.join(format!("{}.json", agent_name));
+    let config_json = serde_json::to_string_pretty(config)
+        .map_err(|e| ChatError::Custom(format!("Failed to serialize agent config: {}", e).into()))?;
+
+    tokio::fs::write(&config_file, config_json)
+        .await
+        .map_err(|e| ChatError::Custom(format!("Failed to write agent config file: {}", e).into()))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -4412,29 +4447,4 @@ mod tests {
             assert_eq!(actual, *expected, "expected {} for input {}", expected, input);
         }
     }
-}
-
-// Helper method to save the agent config to file
-async fn save_agent_config(os: &mut Os, config: &Agent, agent_name: &str, is_global: bool) -> Result<(), ChatError> {
-    let config_dir = if is_global {
-        directories::chat_global_agent_path(os)
-            .map_err(|e| ChatError::Custom(format!("Could not find global agent directory: {}", e).into()))?
-    } else {
-        directories::chat_local_agent_dir(os)
-            .map_err(|e| ChatError::Custom(format!("Could not find local agent directory: {}", e).into()))?
-    };
-
-    tokio::fs::create_dir_all(&config_dir)
-        .await
-        .map_err(|e| ChatError::Custom(format!("Failed to create config directory: {}", e).into()))?;
-
-    let config_file = config_dir.join(format!("{}.json", agent_name));
-    let config_json = serde_json::to_string_pretty(config)
-        .map_err(|e| ChatError::Custom(format!("Failed to serialize agent config: {}", e).into()))?;
-
-    tokio::fs::write(&config_file, config_json)
-        .await
-        .map_err(|e| ChatError::Custom(format!("Failed to write agent config file: {}", e).into()))?;
-
-    Ok(())
 }
