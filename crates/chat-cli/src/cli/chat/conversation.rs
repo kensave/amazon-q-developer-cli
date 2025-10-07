@@ -150,7 +150,7 @@ pub struct ConversationState {
     /// Tangent mode checkpoint - stores main conversation when in tangent mode
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tangent_state: Option<ConversationCheckpoint>,
-    /// Current continuation ID for billing tracking - generated per conversation turn
+    /// Current continuation ID - generated per conversation turn
     #[serde(default, skip_serializing_if = "Option::is_none")]
     current_continuation_id: Option<String>,
 }
@@ -383,12 +383,12 @@ impl ConversationState {
         self.next_message = None;
     }
 
-    /// Returns the current continuation ID for billing tracking
+    /// Returns the current continuation ID
     pub fn continuation_id(&self) -> Option<&str> {
         self.current_continuation_id.as_deref()
     }
 
-    /// Generate a new continuation ID for billing tracking
+    /// Generate a new continuation ID
     fn generate_new_continuation_id(&mut self) {
         let new_continuation_id = uuid::Uuid::new_v4().to_string();
         self.current_continuation_id = Some(new_continuation_id);

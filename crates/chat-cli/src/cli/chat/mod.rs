@@ -2129,7 +2129,7 @@ impl ChatSession {
                     user_input
                 };
 
-                // For tool approval responses (y/n/t), preserve continuation ID for billing consistency
+                // For tool approval responses (y/n/t), preserve continuation ID
                 let preserve_continuation_id = is_simple_tool_interaction(&input_trimmed);
                 self.conversation.abandon_tool_use_with_continuation_policy(
                     &self.tool_uses,
@@ -3700,7 +3700,7 @@ fn is_reject_response(input: &str) -> bool {
 }
 
 /// Check if input is any simple tool interaction response (y/Y/n/N/t/T)
-/// These responses should preserve continuation ID for billing consistency
+/// These responses should preserve continuation ID
 fn is_simple_tool_interaction(input: &str) -> bool {
     is_trust_response(input) || is_accept_response(input) || is_reject_response(input)
 }
@@ -4454,29 +4454,4 @@ mod tests {
             assert_eq!(actual, *expected, "expected {} for input {}", expected, input);
         }
     }
-}
-
-// Helper method to save the agent config to file
-async fn save_agent_config(os: &mut Os, config: &Agent, agent_name: &str, is_global: bool) -> Result<(), ChatError> {
-    let config_dir = if is_global {
-        directories::chat_global_agent_path(os)
-            .map_err(|e| ChatError::Custom(format!("Could not find global agent directory: {}", e).into()))?
-    } else {
-        directories::chat_local_agent_dir(os)
-            .map_err(|e| ChatError::Custom(format!("Could not find local agent directory: {}", e).into()))?
-    };
-
-    tokio::fs::create_dir_all(&config_dir)
-        .await
-        .map_err(|e| ChatError::Custom(format!("Failed to create config directory: {}", e).into()))?;
-
-    let config_file = config_dir.join(format!("{}.json", agent_name));
-    let config_json = serde_json::to_string_pretty(config)
-        .map_err(|e| ChatError::Custom(format!("Failed to serialize agent config: {}", e).into()))?;
-
-    tokio::fs::write(&config_file, config_json)
-        .await
-        .map_err(|e| ChatError::Custom(format!("Failed to write agent config file: {}", e).into()))?;
-
-    Ok(())
 }

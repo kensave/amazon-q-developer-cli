@@ -1,6 +1,4 @@
-// ABOUTME: Tests for continuation ID billing functionality
-// ABOUTME: Ensures continuation IDs are generated and propagated correctly for billing consistency
-
+// ABOUTME: Ensures continuation IDs are generated and propagated correctly
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
