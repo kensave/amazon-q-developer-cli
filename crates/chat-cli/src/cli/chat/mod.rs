@@ -1914,13 +1914,13 @@ impl ChatSession {
     async fn handle_input(&mut self, os: &mut Os, mut user_input: String) -> Result<ChatState, ChatError> {
         queue!(self.stderr, style::Print('\n'))?;
         user_input = sanitize_unicode_tags(&user_input);
-        let input = user_input.trim();
+        let input_trimmed = user_input.trim().to_string();
 
         // handle image path
-        if let Some(chat_state) = does_input_reference_file(input) {
+        if let Some(chat_state) = does_input_reference_file(&input_trimmed) {
             return Ok(chat_state);
         }
-        if let Some(mut args) = input.strip_prefix("/").and_then(shlex::split) {
+        if let Some(mut args) = input_trimmed.strip_prefix("/").and_then(shlex::split) {
             // Required for printing errors correctly.
             let orig_args = args.clone();
 
@@ -2012,7 +2012,7 @@ impl ChatSession {
             Ok(ChatState::PromptUser {
                 skip_printing_tools: false,
             })
-        } else if let Some(command) = input.strip_prefix("@") {
+        } else if let Some(command) = input_trimmed.strip_prefix("@") {
             let input_parts =
                 shlex::split(command).ok_or(ChatError::Custom("Error splitting prompt command".into()))?;
 
@@ -2030,7 +2030,7 @@ impl ChatSession {
                 arguments,
             };
             return subcommand.execute(os, self).await;
-        } else if let Some(command) = input.strip_prefix("!") {
+        } else if let Some(command) = input_trimmed.strip_prefix("!") {
             // Use platform-appropriate shell
             let result = if cfg!(target_os = "windows") {
                 std::process::Command::new("cmd").args(["/C", command]).status()
@@ -2078,10 +2078,9 @@ impl ChatSession {
 
             // Check for a pending tool approval
             if let Some(index) = self.pending_tool_index {
-                let is_trust = ["t", "T"].contains(&input);
                 let tool_use = &mut self.tool_uses[index];
-                if ["y", "Y"].contains(&input) || is_trust {
-                    if is_trust {
+                if is_approval_response(&input_trimmed) {
+                    if is_trust_response(&input_trimmed) {
                         let formatted_tool_name = self
                             .conversation
                             .tool_manager
@@ -2124,14 +2123,24 @@ impl ChatSession {
                 // TODO: Update this flow to something that does *not* require two requests just to
                 // get a meaningful response from the user - this is a short term solution before
                 // we decide on a better flow.
-                let user_input = if ["n", "N"].contains(&user_input.trim()) {
+                let user_input = if is_reject_response(user_input.trim()) {
                     "I deny this tool request. Ask a follow up question clarifying the expected action".to_string()
                 } else {
                     user_input
                 };
-                self.conversation.abandon_tool_use(&self.tool_uses, user_input);
+
+                // For tool approval responses (y/n/t), preserve continuation ID for billing consistency
+                let preserve_continuation_id = is_simple_tool_interaction(&input_trimmed);
+                self.conversation.abandon_tool_use_with_continuation_policy(
+                    &self.tool_uses,
+                    user_input,
+                    preserve_continuation_id,
+                );
             } else {
-                self.conversation.set_next_user_message(user_input).await;
+                // For regular user messages, always generate new continuation ID
+                self.conversation
+                    .set_next_user_message_with_continuation_policy(user_input, false)
+                    .await;
             }
 
             self.reset_user_turn();
@@ -2619,7 +2628,7 @@ impl ChatSession {
         );
         let mut response_prefix_printed = false;
 
-        let mut tool_uses = Vec::new();
+        let mut tool_uses: Vec<AssistantToolUse> = Vec::new();
         let mut tool_name_being_recvd: Option<String> = None;
 
         if self.spinner.is_some() {
@@ -2904,6 +2913,18 @@ impl ChatSession {
 
                 queue!(self.stderr, style::ResetColor, style::SetAttribute(Attribute::Reset))?;
                 execute!(self.stdout, style::Print("\n"))?;
+
+                // Display continuation ID if available and debug mode is enabled
+                if std::env::var_os("Q_SHOW_CONTINUATION_IDS").is_some() {
+                    if let Some(continuation_id) = self.conversation.continuation_id() {
+                        queue!(
+                            self.stdout,
+                            style::SetForegroundColor(Color::DarkGrey),
+                            style::Print(format!("({})\n", continuation_id)),
+                            style::SetForegroundColor(Color::Reset)
+                        )?;
+                    }
+                }
 
                 for (i, citation) in &state.citations {
                     queue!(
@@ -3661,6 +3682,57 @@ fn does_input_reference_file(input: &str) -> Option<ChatState> {
     }
 
     None
+}
+
+/// Check if input is a "trust" response (t/T)
+fn is_trust_response(input: &str) -> bool {
+    ["t", "T"].contains(&input.trim())
+}
+
+/// Check if input is an "accept" response (y/Y)
+fn is_accept_response(input: &str) -> bool {
+    ["y", "Y"].contains(&input.trim())
+}
+
+/// Check if input is a "reject" response (n/N)
+fn is_reject_response(input: &str) -> bool {
+    ["n", "N"].contains(&input.trim())
+}
+
+/// Check if input is any simple tool interaction response (y/Y/n/N/t/T)
+/// These responses should preserve continuation ID for billing consistency
+fn is_simple_tool_interaction(input: &str) -> bool {
+    is_trust_response(input) || is_accept_response(input) || is_reject_response(input)
+}
+
+/// Check if input is any approval response (y/Y/t/T)
+fn is_approval_response(input: &str) -> bool {
+    is_accept_response(input) || is_trust_response(input)
+}
+
+// Helper method to save the agent config to file
+async fn save_agent_config(os: &mut Os, config: &Agent, agent_name: &str, is_global: bool) -> Result<(), ChatError> {
+    let config_dir = if is_global {
+        directories::chat_global_agent_path(os)
+            .map_err(|e| ChatError::Custom(format!("Could not find global agent directory: {}", e).into()))?
+    } else {
+        directories::chat_local_agent_dir(os)
+            .map_err(|e| ChatError::Custom(format!("Could not find local agent directory: {}", e).into()))?
+    };
+
+    tokio::fs::create_dir_all(&config_dir)
+        .await
+        .map_err(|e| ChatError::Custom(format!("Failed to create config directory: {}", e).into()))?;
+
+    let config_file = config_dir.join(format!("{}.json", agent_name));
+    let config_json = serde_json::to_string_pretty(config)
+        .map_err(|e| ChatError::Custom(format!("Failed to serialize agent config: {}", e).into()))?;
+
+    tokio::fs::write(&config_file, config_json)
+        .await
+        .map_err(|e| ChatError::Custom(format!("Failed to write agent config file: {}", e).into()))?;
+
+    Ok(())
 }
 
 #[cfg(test)]

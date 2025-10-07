@@ -27,6 +27,7 @@ use tracing::{
     debug,
     warn,
 };
+use uuid;
 
 use super::cli::compact::CompactStrategy;
 use super::cli::hooks::HookOutput;
@@ -149,6 +150,9 @@ pub struct ConversationState {
     /// Tangent mode checkpoint - stores main conversation when in tangent mode
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tangent_state: Option<ConversationCheckpoint>,
+    /// Current continuation ID for billing tracking - generated per conversation turn
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    current_continuation_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +216,7 @@ impl ConversationState {
             checkpoint_manager: None,
             mcp_enabled,
             tangent_state: None,
+            current_continuation_id: None,
         }
     }
 
@@ -378,7 +383,32 @@ impl ConversationState {
         self.next_message = None;
     }
 
+    /// Returns the current continuation ID for billing tracking
+    pub fn continuation_id(&self) -> Option<&str> {
+        self.current_continuation_id.as_deref()
+    }
+
+    /// Generate a new continuation ID for billing tracking
+    fn generate_new_continuation_id(&mut self) {
+        let new_continuation_id = uuid::Uuid::new_v4().to_string();
+        self.current_continuation_id = Some(new_continuation_id);
+    }
+
     pub async fn set_next_user_message(&mut self, input: String) {
+        self.set_next_user_message_with_continuation_policy(input, false).await;
+    }
+
+    /// Set the next user message with control over continuation ID generation
+    ///
+    /// # Arguments
+    /// * `input` - The user input message
+    /// * `preserve_continuation_id` - If true, keeps existing continuation ID; if false, generates
+    ///   new one
+    pub async fn set_next_user_message_with_continuation_policy(
+        &mut self,
+        input: String,
+        preserve_continuation_id: bool,
+    ) {
         debug_assert!(self.next_message.is_none(), "next_message should not exist");
         if let Some(next_message) = self.next_message.as_ref() {
             warn!(?next_message, "next_message should not exist");
@@ -390,6 +420,12 @@ impl ConversationState {
         } else {
             input
         };
+
+        // Only generate new continuation ID if not preserving existing one
+        if !preserve_continuation_id {
+            self.generate_new_continuation_id();
+        }
+        // If preserving, keep the existing continuation_id unchanged
 
         let msg = UserMessage::new_prompt(input, Some(Local::now().fixed_offset()));
         self.next_message = Some(msg);
@@ -489,6 +525,28 @@ impl ConversationState {
 
     /// Sets the next user message with "cancelled" tool results.
     pub fn abandon_tool_use(&mut self, tools_to_be_abandoned: &[QueuedTool], deny_input: String) {
+        self.abandon_tool_use_with_continuation_policy(tools_to_be_abandoned, deny_input, false);
+    }
+
+    /// Abandon tool use with control over continuation ID generation
+    ///
+    /// # Arguments
+    /// * `tools_to_be_abandoned` - The tools being abandoned
+    /// * `deny_input` - The user's denial input
+    /// * `preserve_continuation_id` - If true, keeps existing continuation ID; if false, generates
+    ///   new one
+    pub fn abandon_tool_use_with_continuation_policy(
+        &mut self,
+        tools_to_be_abandoned: &[QueuedTool],
+        deny_input: String,
+        preserve_continuation_id: bool,
+    ) {
+        // Only generate new continuation ID if not preserving existing one
+        if !preserve_continuation_id {
+            self.generate_new_continuation_id();
+        }
+        // If preserving, keep the existing continuation_id unchanged
+
         self.next_message = Some(UserMessage::new_cancelled_tool_uses(
             Some(deny_input),
             tools_to_be_abandoned.iter().map(|t| t.id.as_str()),
@@ -614,6 +672,7 @@ impl ConversationState {
             dropped_context_files,
             tools: &self.tools,
             model_id: self.model_info.as_ref().map(|m| m.model_id.as_str()),
+            continuation_id: self.current_continuation_id.as_deref(),
         })
     }
 
@@ -719,6 +778,7 @@ impl ConversationState {
                 .unwrap_or(UserMessage::new_prompt(summary_content, None)) // should not happen
                 .into_user_input_message(self.model_info.as_ref().map(|m| m.model_id.clone()), &tools),
             history: Some(flatten_history(history.iter())),
+            agent_continuation_id: self.current_continuation_id.clone(),
         })
     }
 
@@ -777,6 +837,7 @@ Return only the JSON configuration, no additional text.",
             conversation_id: Some(self.conversation_id.clone()),
             user_input_message: generation_message.into_user_input_message(self.model.clone(), &tools),
             history: Some(flatten_history(history.iter())),
+            agent_continuation_id: self.current_continuation_id.clone(),
         })
     }
 
@@ -957,6 +1018,9 @@ Return only the JSON configuration, no additional text.",
     }
 }
 
+#[cfg(test)]
+mod continuation_tests;
+
 pub fn format_tool_spec(tool_spec: HashMap<String, ToolSpec>) -> HashMap<ToolOrigin, Vec<Tool>> {
     tool_spec
         .into_values()
@@ -992,6 +1056,7 @@ pub struct BackendConversationStateImpl<'a, T, U> {
     pub dropped_context_files: Vec<(String, String)>,
     pub tools: &'a HashMap<ToolOrigin, Vec<Tool>>,
     pub model_id: Option<&'a str>,
+    pub continuation_id: Option<&'a str>,
 }
 
 impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, HistoryEntry>, Option<Vec<HistoryEntry>>> {
@@ -1007,6 +1072,7 @@ impl BackendConversationStateImpl<'_, std::collections::vec_deque::Iter<'_, Hist
             conversation_id: Some(self.conversation_id.to_string()),
             user_input_message,
             history: Some(history),
+            agent_continuation_id: self.continuation_id.map(str::to_string),
         })
     }
 
